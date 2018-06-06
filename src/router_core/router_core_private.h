@@ -108,6 +108,7 @@ struct qdr_action_t {
             qdr_error_t      *error;
             qd_detach_type_t  dt;
             int               credit;
+            bool              more;  // true if there are more frames arriving, false otherwise
             bool              drain;
             uint8_t           tag[32];
             int               tag_length;
@@ -352,6 +353,7 @@ struct qdr_delivery_t {
     qdr_link_work_t        *link_work;         ///< Delivery work item for this delivery
     qdr_subscription_list_t subscriptions;
     qdr_delivery_ref_list_t peers;             /// Use this list if there if the delivery has more than one peer.
+    bool                    multicast;         /// True if this delivery is targeted for a multicast address.
 
 };
 
