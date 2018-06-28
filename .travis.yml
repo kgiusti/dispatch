@@ -17,6 +17,14 @@
 # under the License
 #
 
+# coverity scan
+env:
+  global:
+   # The next declaration is the encrypted COVERITY_SCAN_TOKEN, created
+   #   via the "travis encrypt" command using the project repo's public key
+   - secure: "h3qXLmpAKlUAxtJC4MB+IJHqi/sBZbWPPLL7hiFHO/DrenikOS31TOz92+ExF+waofq0xNW/41KWQ7h8kzplrBZEfpvIPgktD+qCImsiTf6G84VkF1jKmrA7In2UXtLbP3S6/AOYRlTREkOJlZ5nDaHu86dz5ammA/WCpX6LK7n0VLiSj8kU7itVahXpEDsTopJGJj+QrDPDsVG3TLA8WDoQ5QfekDG9ryKcHYfVM9lGJOITJVFbflLYk8+/u9uztmliBhlmdZlWKdtI9FoHurEogh6Ndc7JOcE+gNcA6ru5aKhnjr4AVGLIjcnq57G0W+sRfFQwgVv/01vO1sRRwTGL0WLanip3ClTVN+I1uWumVF1nvXw0jEcV8oV05nlnxB5xmGVNtLYGKC/XGrFWT+z3zm4n5vEL1KW09R7hrfuT6EDfLFlIszAcRoEjVzHJLnSAK4syv6of5sGZTft+MT+veN9gCk5s8QC4H2mPs/s/d/D/l9CEzt0SUBEI3hCuNyg4cstVSci3oYRLxEtNuwURCKmmxAbACp7oHGfWQVKAplsjhQaXJQwvJTjCazVhRJ6CbUKSz33g0/qeh5yUUDgRwuhFf8FxVwC8sJg5qHxKY3D3AsnPGPzgnZHgiP8HscaiAMrDAZM76q4zZ/vf9xandJQefv3qZLMqRIytFp8="
+
+
 os: linux
 dist: trusty
 sudo: true
@@ -44,6 +52,19 @@ addons:
     - python-unittest2
     # code coverage
     - lcov
+  # from the coverity website - only for kgiusti@github.com
+  coverity_scan:
+    project:
+      name: "kgiusti/dispatch"
+      description: "Fork of Apache Qpid Dispatch Router"
+    notification_email: kgiusti@apache.org
+    build_command_prepend: "echo build command prepend"
+    build_command: "make -C build"
+    branch_pattern: coverity_scan
+
+# coverity scan:
+before_install:
+  - echo -n | openssl s_client -connect https://scan.coverity.com:443 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' | sudo tee -a /etc/ssl/certs/ca-
 
 install:
 - PREFIX=$PWD/install
