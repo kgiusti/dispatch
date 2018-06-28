@@ -57,9 +57,9 @@ addons:
     project:
       name: "kgiusti/dispatch"
       description: "Fork of Apache Qpid Dispatch Router"
-    notification_email: kgiusti@apache.org
-    build_command_prepend: "echo build command prepend"
-    build_command: "make -C build"
+    notification_email: kgiusti@gmail.com
+    build_command_prepend: "make clean"
+    build_command: "make"
     branch_pattern: coverity_scan
 
 # coverity scan:
