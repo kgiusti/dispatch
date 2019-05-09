@@ -1,5 +1,5 @@
-#ifndef __delivery_h__
-#define __delivery_h__ 1
+#ifndef __delivery_core_h__
+#define __delivery_core_h__ 1
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one
@@ -20,17 +20,8 @@
  * under the License.
  */
 
+#include <qpid/dispatch/delivery.h>
 #include "router_core_private.h"
-
-#define QDR_DELIVERY_TAG_MAX 32
-
-typedef enum {
-    QDR_DELIVERY_NOWHERE = 0,
-    QDR_DELIVERY_IN_UNDELIVERED,
-    QDR_DELIVERY_IN_UNSETTLED,
-    QDR_DELIVERY_IN_SETTLED
-} qdr_delivery_where_t;
-
 
 struct qdr_delivery_t {
     DEQ_LINKS(qdr_delivery_t);
@@ -41,11 +32,11 @@ struct qdr_delivery_t {
     qd_message_t           *msg;
     qd_iterator_t          *to_addr;
     qd_iterator_t          *origin;
-    uint64_t                disposition;
+    uint64_t                disposition;   // set by owning I/O thread to current pn_delivery_t dispo value
     uint32_t                ingress_time;
     pn_data_t              *extension_state;
     qdr_error_t            *error;
-    bool                    settled;
+    bool                    settled;       // set true by owning I/O thread when local pn_delivery_t settled
     bool                    presettled;
     bool                    incoming;
     qdr_delivery_where_t    where;
@@ -77,54 +68,15 @@ ALLOC_DECLARE(qdr_delivery_mcast_node_t);
 //                               Delivery API
 ///////////////////////////////////////////////////////////////////////////////
 
-qdr_delivery_t *qdr_delivery(qdr_link_t *link);
 
-bool qdr_delivery_receive_complete(const qdr_delivery_t *delivery);
-bool qdr_delivery_send_complete(const qdr_delivery_t *delivery);
-
-void qdr_delivery_set_context(qdr_delivery_t *delivery, void *context);
-void *qdr_delivery_get_context(const qdr_delivery_t *delivery);
-
-void qdr_delivery_tag(const qdr_delivery_t *delivery, const char **tag, int *length);
-bool qdr_delivery_tag_sent(const qdr_delivery_t *delivery);
-void qdr_delivery_set_tag_sent(const qdr_delivery_t *delivery, bool tag_sent);
-
-uint64_t qdr_delivery_disposition(const qdr_delivery_t *delivery);
-void qdr_delivery_set_disposition(qdr_delivery_t *delivery, uint64_t disposition);
-
-void qdr_delivery_set_aborted(const qdr_delivery_t *delivery, bool aborted);
-
-qd_message_t *qdr_delivery_message(const qdr_delivery_t *delivery);
-qdr_error_t *qdr_delivery_error(const qdr_delivery_t *delivery);
-qdr_link_t *qdr_delivery_link(const qdr_delivery_t *delivery);
-bool qdr_delivery_presettled(const qdr_delivery_t *delivery);
-
-void qdr_delivery_incref(qdr_delivery_t *delivery, const char *label);
-
-/* copy extension state data into a delivery */
-void qdr_delivery_read_extension_state(qdr_delivery_t *dlv, uint64_t disposition, pn_data_t* disposition_data, bool update_disposition);
-
-/* write extension state data to a proton delivery */
-void qdr_delivery_write_extension_state(qdr_delivery_t *dlv, pn_delivery_t* pdlv, bool update_disposition);
+/* copy extension state data from proton into a delivery */
+void qdr_delivery_read_extension_state(qdr_delivery_t *dlv, uint64_t disposition, pn_data_t* disposition_data);
 
 /* transfer extension state data between deliveries */
-void qdr_delivery_move_extension_state(qdr_delivery_t *src, qdr_delivery_t *dest, bool update_disposition);
+void qdr_delivery_move_extension_state(qdr_delivery_t *src, qdr_delivery_t *dest);
 
 /* copy src extension state info dest */
-void qdr_delivery_copy_extension_state(qdr_delivery_t *src, qdr_delivery_t *dest, bool update_disposition);
-//
-// I/O thread only functions
-//
-
-/* release dlv and possibly schedule its deletion on the core thread */
-void qdr_delivery_decref(qdr_core_t *core, qdr_delivery_t *delivery, const char *label);
-
-/* handles disposition/settlement changes from remote delivery and schedules Core thread */
-void qdr_delivery_update_disposition(qdr_core_t *core, qdr_delivery_t *delivery, uint64_t disp,
-                                     bool settled, qdr_error_t *error, pn_data_t *ext_state, bool ref_given);
-
-/* invoked when incoming message data arrives - schedule core thread */
-qdr_delivery_t *qdr_deliver_continue(qdr_core_t *core, qdr_delivery_t *in_dlv);
+void qdr_delivery_copy_extension_state(qdr_delivery_t *src, qdr_delivery_t *dest);
 
 
 //
@@ -149,11 +101,10 @@ bool qdr_delivery_set_outgoing_CT(qdr_core_t *core, qdr_delivery_t *in_dlv, qdr_
 // set in_dlv's list of outgoing mcast deliveries
 void qdr_delivery_set_mcasts_CT(qdr_core_t *core, qdr_delivery_t *in_dlv, const qdr_delivery_mcast_list_t *out_dlvs);
 
-// schedule outgoing deliveries to do I/O
-void qdr_delivery_continue_transfer_CT(qdr_core_t *core, qdr_delivery_t *in_delivery);
-
 // the delivery's link is gone - update peer deliveries and cleanup link related stuff
 void qdr_delivery_link_dropped_CT(qdr_core_t *core, qdr_delivery_t *dlv, bool release);
 
+// called when the router has completed the forwarding process
+void qdr_delivery_forwarding_done_CT(qdr_core_t *core, qdr_delivery_t *in_delivery);
 
-#endif // __delivery_h__
+#endif // __delivery_core_h__

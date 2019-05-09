@@ -143,13 +143,10 @@ struct qdr_action_t {
         } connection;
 
         //
-        // Arguments for delivery state updates
+        // Arguments for delivery settlement notification to core
         //
         struct {
             qdr_delivery_t *delivery;
-            uint64_t        disposition;
-            bool            settled;
-            qdr_error_t    *error;
         } delivery;
 
         //
@@ -386,7 +383,7 @@ DEQ_DECLARE(qdr_subscription_t, qdr_subscription_list_t);
 
 DEQ_DECLARE(qdr_delivery_t, qdr_delivery_list_t);
 
-void qdr_add_delivery_ref_CT(qdr_delivery_ref_list_t *list, qdr_delivery_t *dlv);
+void qdr_add_delivery_ref(qdr_delivery_ref_list_t *list, qdr_delivery_t *dlv);
 void qdr_del_delivery_ref(qdr_delivery_ref_list_t *list, qdr_delivery_ref_t *ref);
 
 #define QDR_LINK_LIST_CLASS_ADDRESS    0
@@ -427,7 +424,6 @@ struct qdr_link_t {
     qdr_auto_link_t         *auto_link;          ///< [ref] Auto_link that owns this link
     qdr_delivery_list_t      undelivered;        ///< Deliveries to be forwarded or sent
     qdr_delivery_list_t      unsettled;          ///< Unsettled deliveries
-    qdr_delivery_list_t      settled;            ///< Settled deliveries
     qdr_delivery_ref_list_t  updated_deliveries; ///< References to deliveries (in the unsettled list) with updates.
     qdr_link_oper_status_t   oper_status;
     int                      capacity;
@@ -631,10 +627,10 @@ struct qdr_connection_t {
     bool                        policy_allow_admin_status_update;
     int                         link_capacity;
     int                         mask_bit;
-    qdr_connection_work_list_t  work_list;
+    qdr_connection_work_list_t  work_list;  // hold work_lock
     sys_mutex_t                *work_lock;
     qdr_link_ref_list_t         links;
-    qdr_link_ref_list_t         links_with_work[QDR_N_PRIORITIES];
+    qdr_link_ref_list_t         links_with_work[QDR_N_PRIORITIES];  // hold work_lock
     char                       *tenant_space;
     int                         tenant_space_len;
     qdr_connection_info_t      *connection_info;
@@ -900,7 +896,7 @@ bool qdr_is_addr_treatment_multicast(qdr_address_t *addr);
 qdr_delivery_t *qdr_forward_new_delivery_CT(qdr_core_t *core, qdr_delivery_t *peer, qdr_link_t *link, qd_message_t *msg);
 void qdr_forward_deliver_CT(qdr_core_t *core, qdr_link_t *link, qdr_delivery_t *dlv);
 void qdr_connection_free(qdr_connection_t *conn);
-void qdr_connection_activate_CT(qdr_core_t *core, qdr_connection_t *conn);
+void qdr_connection_activate(qdr_core_t *core, qdr_connection_t *conn);
 qdr_address_config_t *qdr_config_for_address_CT(qdr_core_t *core, qdr_connection_t *conn, qd_iterator_t *iter);
 qd_address_treatment_t qdr_treatment_for_address_hash_CT(qdr_core_t *core, qd_iterator_t *iter, qdr_address_config_t **addr_config);
 qd_address_treatment_t qdr_treatment_for_address_hash_with_default_CT(qdr_core_t *core, qd_iterator_t *iter, qd_address_treatment_t default_treatment, qdr_address_config_t **addr_config);

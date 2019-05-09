@@ -424,6 +424,9 @@ void qd_message_set_aborted(const qd_message_t *msg, bool aborted);
 uint8_t qd_message_get_priority(qd_message_t *msg);
 
 
+void qd_message_lock(qd_message_t *msg);
+void qd_message_unlock(qd_message_t *msg);
+
 ///@}
 
 #endif

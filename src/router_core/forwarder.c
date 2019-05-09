@@ -22,7 +22,7 @@
 #include <stdio.h>
 #include <strings.h>
 #include "forwarder.h"
-#include "delivery.h"
+#include "delivery_core.h"
 
 
 ALLOC_DEFINE(qdr_delivery_mcast_node_t);
@@ -116,8 +116,12 @@ qdr_delivery_t *qdr_forward_new_delivery_CT(qdr_core_t *core, qdr_delivery_t *in
     out_dlv->tag_length = 8;
     out_dlv->error      = 0;
 
+    out_dlv->disposition   = in_dlv ? in_dlv->disposition : 0;
     out_dlv->ingress_time  = in_dlv ? in_dlv->ingress_time  : core->uptime_ticks;
     out_dlv->ingress_index = in_dlv ? in_dlv->ingress_index : -1;
+
+    if (out_dlv->disposition)
+        qdr_delivery_copy_extension_state(in_dlv, out_dlv);
 
     //
     // Add one to the message fanout. This will later be used in the qd_message_send function that sends out messages.
@@ -237,7 +241,7 @@ void qdr_forward_deliver_CT(qdr_core_t *core, qdr_link_t *out_link, qdr_delivery
     //
     // Activate the outgoing connection for later processing.
     //
-    qdr_connection_activate_CT(core, out_link->conn);
+    qdr_connection_activate(core, out_link->conn);
 }
 
 
@@ -327,6 +331,7 @@ int qdr_forward_multicast_CT(qdr_core_t      *core,
     bool          presettled           = !!in_delivery ? in_delivery->settled : true;
     bool          receive_complete     = qd_message_receive_complete(qdr_delivery_message(in_delivery));
     uint8_t       priority             = qdr_forward_effective_priority(msg, addr);
+    bool          ignore               = true;
 
     qdr_delivery_mcast_list_t delivery_mcast_list;
     DEQ_INIT(delivery_mcast_list);
@@ -462,6 +467,7 @@ int qdr_forward_multicast_CT(qdr_core_t      *core,
         //
         qdr_subscription_t *sub = DEQ_HEAD(addr->subscriptions);
         while (sub) {
+            ignore = false;
             qdr_forward_to_subscriber(core, sub, in_delivery, msg, receive_complete);
             fanout++;
             addr->deliveries_to_container++;
@@ -480,24 +486,33 @@ int qdr_forward_multicast_CT(qdr_core_t      *core,
     }
 
     if (in_delivery && !presettled) {
+        //
+        // the delivery has been sent unsettled by the sender. we do not
+        // support true unsettled multicast at this point and therefore have
+        // sent all outbound deliveries as presettled.  Since we will not get
+        // any settlement from downstream we have to settle it ourselves.
+        //
         if (fanout == 0)
             //
-            // The delivery was not presettled and it was not forwarded to any
-            // destinations, return it to its original unsettled state.
+            // Not forwarded: return it to its original unsettled state. This
+            // will end up causing the delivery to be RELEASED.
             //
             in_delivery->settled = false;
         else {
             //
-            // The delivery was not presettled and it was forwarded to at least
-            // one destination.  Accept and settle the delivery only if the entire delivery
-            // has been received.
+            // Keep in_delivery marked as settled - the I/O thread will
+            // eventually propagate the disposition and settle this delivery
+            // once receive completes.
             //
-            if (receive_complete) {
-                in_delivery->disposition = PN_ACCEPTED;
-                qdr_delivery_push_CT(core, in_delivery);
-            }
+            in_delivery->disposition = PN_ACCEPTED;
+            qdr_delivery_push_CT(core, in_delivery);
         }
     }
+
+    if (ignore)
+        // if there are no in process consumers the core no longer needs to
+        // receive data updates
+        qdr_delivery_forwarding_done_CT(core, in_delivery);
 
     return fanout;
 }
@@ -559,6 +574,7 @@ int qdr_forward_closest_CT(qdr_core_t      *core,
         out_link     = link_ref->link;
         out_delivery = qdr_forward_new_delivery_CT(core, in_delivery, out_link, msg);
         qdr_delivery_set_outgoing_CT(core, in_delivery, out_delivery);
+        qdr_delivery_forwarding_done_CT(core, in_delivery);
         qdr_forward_deliver_CT(core, out_link, out_delivery);
 
         //
@@ -612,6 +628,7 @@ int qdr_forward_closest_CT(qdr_core_t      *core,
             if (out_link) {
                 out_delivery = qdr_forward_new_delivery_CT(core, in_delivery, out_link, msg);
                 qdr_delivery_set_outgoing_CT(core, in_delivery, out_delivery);
+                qdr_delivery_forwarding_done_CT(core, in_delivery);
                 qdr_forward_deliver_CT(core, out_link, out_delivery);
                 addr->deliveries_transit++;
                 if (out_link->link_type == QD_LINK_ROUTER)
@@ -767,6 +784,7 @@ int qdr_forward_balanced_CT(qdr_core_t      *core,
     if (chosen_link) {
         qdr_delivery_t *out_delivery = qdr_forward_new_delivery_CT(core, in_delivery, chosen_link, msg);
         qdr_delivery_set_outgoing_CT(core, in_delivery, out_delivery);
+        qdr_delivery_forwarding_done_CT(core, in_delivery);
         qdr_forward_deliver_CT(core, chosen_link, out_delivery);
 
         //

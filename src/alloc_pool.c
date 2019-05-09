@@ -46,6 +46,9 @@ DEQ_DECLARE(qd_alloc_type_t, qd_alloc_type_list_t);
 struct qd_alloc_item_t {
     DEQ_LINKS(qd_alloc_item_t);
     uint32_t              sequence;
+    bool                  alloced;
+    qd_alloc_pool_t      *my_pool;
+    DEQ_LINKS_N(ALLOCED, qd_alloc_item_t);
 #ifdef QD_MEMORY_DEBUG
     qd_alloc_type_desc_t *desc;
     uint32_t              header;
@@ -58,6 +61,7 @@ DEQ_DECLARE(qd_alloc_item_t, qd_alloc_item_list_t);
 struct qd_alloc_pool_t {
     DEQ_LINKS(qd_alloc_pool_t);
     qd_alloc_item_list_t free_list;
+    qd_alloc_item_list_t alloc_list;
 };
 
 qd_alloc_config_t qd_alloc_default_config_big   = {16,  32, 0};
@@ -126,6 +130,7 @@ void *qd_alloc(qd_alloc_type_desc_t *desc, qd_alloc_pool_t **tpool)
         NEW_CACHE_ALIGNED(qd_alloc_pool_t, *tpool);
         DEQ_ITEM_INIT(*tpool);
         DEQ_INIT((*tpool)->free_list);
+        DEQ_INIT((*tpool)->alloc_list);
         sys_mutex_lock(desc->lock);
         DEQ_INSERT_TAIL(desc->tpool_list, *tpool);
         sys_mutex_unlock(desc->lock);
@@ -140,6 +145,7 @@ void *qd_alloc(qd_alloc_type_desc_t *desc, qd_alloc_pool_t **tpool)
     //
     qd_alloc_item_t *item = DEQ_HEAD(pool->free_list);
     if (item) {
+        assert(!item->alloced && !item->my_pool);
         DEQ_REMOVE_HEAD(pool->free_list);
 #ifdef QD_MEMORY_DEBUG
         item->desc   = desc;
@@ -147,6 +153,11 @@ void *qd_alloc(qd_alloc_type_desc_t *desc, qd_alloc_pool_t **tpool)
         *((uint32_t*) ((char*) &item[1] + desc->total_size))= PATTERN_BACK;
         QD_MEMORY_FILL(&item[1], QD_MEMORY_INIT, desc->total_size);
 #endif
+        item->alloced = true;
+        item->my_pool = pool;
+        sys_mutex_lock(desc->lock);
+        DEQ_INSERT_TAIL_N(ALLOCED, pool->alloc_list, item);
+        sys_mutex_unlock(desc->lock);
         return &item[1];
     }
 
@@ -182,8 +193,11 @@ void *qd_alloc(qd_alloc_type_desc_t *desc, qd_alloc_pool_t **tpool)
             if (item == 0)
                 break;
             DEQ_ITEM_INIT(item);
+            DEQ_ITEM_INIT_N(ALLOCED, item);
             DEQ_INSERT_TAIL(pool->free_list, item);
             item->sequence = 0;
+            item->alloced = false;
+            item->my_pool = 0;
 #if QD_MEMORY_STATS
             desc->stats->held_by_threads++;
             desc->stats->total_alloc_from_heap++;
@@ -195,6 +209,12 @@ void *qd_alloc(qd_alloc_type_desc_t *desc, qd_alloc_pool_t **tpool)
     item = DEQ_HEAD(pool->free_list);
     if (item) {
         DEQ_REMOVE_HEAD(pool->free_list);
+        item->alloced = true;
+        item->my_pool = pool;
+        sys_mutex_lock(desc->lock);
+        DEQ_INSERT_TAIL_N(ALLOCED, pool->alloc_list, item);
+        sys_mutex_unlock(desc->lock);
+
 #ifdef QD_MEMORY_DEBUG
         item->desc = desc;
         item->header = PATTERN_FRONT;
@@ -233,6 +253,7 @@ void qd_dealloc(qd_alloc_type_desc_t *desc, qd_alloc_pool_t **tpool, char *p)
         *tpool = NEW(qd_alloc_pool_t);
         DEQ_ITEM_INIT(*tpool);
         DEQ_INIT((*tpool)->free_list);
+        DEQ_INIT((*tpool)->alloc_list);
         sys_mutex_lock(desc->lock);
         DEQ_INSERT_TAIL(desc->tpool_list, *tpool);
         sys_mutex_unlock(desc->lock);
@@ -241,6 +262,14 @@ void qd_dealloc(qd_alloc_type_desc_t *desc, qd_alloc_pool_t **tpool, char *p)
     qd_alloc_pool_t *pool = *tpool;
 
     item->sequence++;
+
+    if (item->alloced) {
+        sys_mutex_lock(desc->lock);
+        DEQ_REMOVE_N(ALLOCED, item->my_pool->alloc_list, item);
+        sys_mutex_unlock(desc->lock);
+        item->alloced = false;
+        item->my_pool = 0;
+    }
     DEQ_INSERT_TAIL(pool->free_list, item);
 
     if (DEQ_SIZE(pool->free_list) <= desc->config->local_free_list_max)
@@ -356,6 +385,7 @@ void qd_alloc_finalize(void)
                 item = DEQ_HEAD(tpool->free_list);
             }
 
+            assert(DEQ_SIZE(tpool->alloc_list) < 10);
             DEQ_REMOVE_HEAD(desc->tpool_list);
             free(tpool);
             tpool = DEQ_HEAD(desc->tpool_list);

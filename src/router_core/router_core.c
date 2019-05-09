@@ -21,7 +21,7 @@
 #include "route_control.h"
 #include "exchange_bindings.h"
 #include "core_events.h"
-#include "delivery.h"
+#include "delivery_core.h"
 #include <stdio.h>
 #include <strings.h>
 
@@ -667,7 +667,7 @@ void qdr_del_connection_ref(qdr_connection_ref_list_t *ref_list, qdr_connection_
 }
 
 
-void qdr_add_delivery_ref_CT(qdr_delivery_ref_list_t *list, qdr_delivery_t *dlv)
+void qdr_add_delivery_ref(qdr_delivery_ref_list_t *list, qdr_delivery_t *dlv)
 {
     qdr_delivery_ref_t *ref = new_qdr_delivery_ref_t();
     DEQ_ITEM_INIT(ref);

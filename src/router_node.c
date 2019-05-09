@@ -26,7 +26,7 @@
 #include "dispatch_private.h"
 #include "entity_cache.h"
 #include "router_private.h"
-#include "delivery.h"
+#include "delivery_io.h"
 #include <qpid/dispatch/router_core.h>
 #include <qpid/dispatch/proton_utils.h>
 #include <proton/sasl.h>
@@ -117,8 +117,6 @@ static void qdr_node_reap_abandoned_deliveries(qdr_core_t *core, qd_link_t *link
         ref = DEQ_HEAD(*list);
     }
 }
-
-
 
 
 /**
@@ -332,7 +330,7 @@ static bool AMQP_rx_handler(void* context, qd_link_t *link)
     //
     // Receive the message into a local representation.
     //
-    qd_message_t   *msg   = qd_message_receive(pnd);
+    qd_message_t     *msg = qd_message_receive(pnd);
     bool receive_complete = qd_message_receive_complete(msg);
 
     if (receive_complete) {
@@ -343,9 +341,6 @@ static bool AMQP_rx_handler(void* context, qd_link_t *link)
         //
         pn_link_advance(pn_link);
         next_delivery = pn_link_current(pn_link) != 0;
-
-        if (qdr_delivery_disposition(delivery) != 0)
-            pn_delivery_update(pnd, qdr_delivery_disposition(delivery));
     }
 
     if (qd_message_is_discard(msg)) {
@@ -355,7 +350,6 @@ static bool AMQP_rx_handler(void* context, qd_link_t *link)
         if (receive_complete) {
             // note: expected that the code that set discard has handled
             // setting disposition and updating flow!
-            pn_delivery_settle(pnd);
             if (delivery) {
                 // if delivery already exists then the core thread discarded this
                 // delivery, it will eventually free the qdr_delivery_t and its
@@ -364,6 +358,7 @@ static bool AMQP_rx_handler(void* context, qd_link_t *link)
             } else {
                 qd_message_free(msg);
             }
+            pn_delivery_settle(pnd);
         }
         return next_delivery;
     }
@@ -674,32 +669,28 @@ static void AMQP_disposition_handler(void* context, qd_link_t *link, pn_delivery
     qd_router_t    *router   = (qd_router_t*) context;
     qdr_delivery_t *delivery = qdr_node_delivery_qdr_from_pn(pnd);
 
-    //
-    // It's important to not do any processing without a qdr_delivery.  When pre-settled
-    // multi-frame deliveries arrive, it's possible for the settlement to register before
-    // the whole message arrives.  Such premature settlement indications must be ignored.
-    //
-    if (!delivery || !qdr_delivery_receive_complete(delivery))
+    if (!delivery)
         return;
 
     pn_disposition_t *disp  = pn_delivery_remote(pnd);
     pn_condition_t   *cond  = pn_disposition_condition(disp);
     qdr_error_t      *error = qdr_error_from_pn(cond);
+    bool     remote_settled = pn_delivery_settled(pnd);
 
     //
-    // Update the disposition of the delivery
+    // Update and propagate the disposition of the delivery.  Determines if it
+    // is safe to settle the local pn_delivery_t
     //
-    qdr_delivery_update_disposition(router->router_core, delivery,
-                                    pn_delivery_remote_state(pnd),
-                                    pn_delivery_settled(pnd),
-                                    error,
-                                    pn_disposition_data(disp),
-                                    false);
+    bool settle_pn = qdr_delivery_update_disposition(router->router_core, delivery,
+                                                     pn_delivery_remote_state(pnd),
+                                                     remote_settled,
+                                                     error,
+                                                     pn_disposition_data(disp));
 
     //
     // If settled, close out the delivery
     //
-    if (pn_delivery_settled(pnd)) {
+    if (settle_pn) {
         qdr_node_disconnect_deliveries(router->router_core, link, delivery, pnd);
         pn_delivery_settle(pnd);
     }
@@ -1539,20 +1530,17 @@ static int CORE_link_push(void *context, qdr_link_t *link, int limit)
     return 0;
 }
 
-static uint64_t CORE_link_deliver(void *context, qdr_link_t *link, qdr_delivery_t *dlv, bool settled)
+static bool CORE_link_deliver(void *context, qdr_link_t *link, qdr_delivery_t *dlv)
 {
-    qd_router_t *router = (qd_router_t*) context;
     qd_link_t   *qlink  = (qd_link_t*) qdr_link_get_context(link);
     qd_connection_t *qconn = qd_link_connection(qlink);
 
-    uint64_t update = 0;
-
     if (!qlink)
-        return 0;
+        return false;
 
     pn_link_t *plink = qd_link_pn(qlink);
     if (!plink)
-        return 0;
+        return false;
 
     //
     // If the remote send settle mode is set to 'settled' then settle the delivery on behalf of the receiver.
@@ -1571,12 +1559,6 @@ static uint64_t CORE_link_deliver(void *context, qdr_link_t *link, qdr_delivery_
 
         pdlv = pn_link_current(plink);
 
-        // handle any delivery-state on the transfer e.g. transactional-state
-        qdr_delivery_write_extension_state(dlv, pdlv, true);
-
-        //
-        // If the remote send settle mode is set to 'settled', we should settle the delivery on behalf of the receiver.
-        //
         if (qdr_delivery_get_context(dlv) == 0)
             qdr_node_connect_deliveries(qlink, dlv, pdlv);
 
@@ -1586,7 +1568,7 @@ static uint64_t CORE_link_deliver(void *context, qdr_link_t *link, qdr_delivery_
     }
 
     if (!pdlv)
-        return 0;
+        return false;
 
     bool restart_rx = false;
     bool q3_stalled = false;
@@ -1605,48 +1587,29 @@ static uint64_t CORE_link_deliver(void *context, qdr_link_t *link, qdr_delivery_
     bool send_complete = qdr_delivery_send_complete(dlv);
 
     if (send_complete) {
-        if (qd_message_aborted(msg_out)) {
-            // Aborted messages must be settled locally
-            // Settling does not produce any disposition to message sender.
-            if (pdlv) {
-                pn_link_advance(plink);
-                qdr_node_disconnect_deliveries(router->router_core, qlink, dlv, pdlv);
-                pn_delivery_settle(pdlv);
-            }
-        } else {
-            if (!settled && remote_snd_settled) {
-                // The caller must tell the core that the delivery has been
-                // accepted and settled, since we are settling on behalf of the
-                // receiver
-                update = PN_ACCEPTED;  // schedule the settle
-            }
-
-            pn_link_advance(plink);
-
-            if (settled || remote_snd_settled) {
-                if (pdlv) {
-                    qdr_node_disconnect_deliveries(router->router_core, qlink, dlv, pdlv);
-                    pn_delivery_settle(pdlv);
-                }
-            }
-        }
+        pn_link_advance(plink);
         log_link_message(qconn, plink, msg_out);
     }
-    return update;
+    return remote_snd_settled;
 }
 
 
-static void CORE_delivery_update(void *context, qdr_delivery_t *dlv, uint64_t disp, bool settled)
+// returns true when the pn_delivery_t is actually settled
+static bool CORE_delivery_update(void *context, qdr_delivery_t *dlv, uint64_t disp, bool settled, bool discard)
 {
     qd_router_t   *router = (qd_router_t*) context;
     pn_delivery_t *pnd    = qdr_node_delivery_pn_from_qdr(dlv);
 
     if (!pnd)
-        return;
+        return false;
 
-    // If the delivery's link is somehow gone (maybe because of a connection drop, we don't proceed.
-    if (!pn_delivery_link(pnd))
-        return;
+    pn_link_t *pnl = pn_delivery_link(pnd);
+    if (!pnl)
+        return false;
+
+    qd_link_t *link = pn_link_get_context(pnl);
+    if (!link)
+        return false;
 
     qdr_error_t *error = qdr_delivery_error(dlv);
 
@@ -1663,68 +1626,29 @@ static void CORE_delivery_update(void *context, qdr_delivery_t *dlv, uint64_t di
         free(description);
     }
 
-    qdr_link_t      *qlink   = qdr_delivery_link(dlv);
-    qd_link_t       *link    = 0;
-    qd_connection_t *qd_conn = 0;
-
-    if (qlink) {
-        link = (qd_link_t*) qdr_link_get_context(qlink);
-        if (link) {
-            qd_conn = qd_link_connection(link);
-            if (qd_conn == 0)
-                return;
-        }
-        else
-            return;
-    }
-    else
-        return;
-
     //
     // If the disposition has changed, update the proton delivery.
     //
-    if (disp != pn_delivery_remote_state(pnd) && !qdr_delivery_presettled(dlv)) {
-        qd_message_t *msg = qdr_delivery_message(dlv);
-
+    if (disp && disp != pn_delivery_local_state(pnd) && !pn_delivery_settled(pnd)) {
         if (disp == PN_MODIFIED)
             pn_disposition_set_failed(pn_delivery_local(pnd), true);
-        qdr_delivery_write_extension_state(dlv, pnd, false);
-
-        //
-        // If the delivery is still arriving, don't push out the disposition change yet.
-        //
-        if (qd_message_receive_complete(msg))
-            pn_delivery_update(pnd, disp);
-        else
-            qdr_delivery_set_disposition(dlv, disp);
+        qdr_delivery_write_extension_state(dlv, pnd);
+        pn_delivery_update(pnd, disp);
     }
 
     if (settled) {
-        qd_message_t *msg = qdr_delivery_message(dlv);
-        if (qd_message_receive_complete(msg)) {
-            //
-            // If the delivery is settled and the message has fully arrived, disconnect
-            // the linkages and settle it in Proton now.
-            //
-            qdr_node_disconnect_deliveries(router->router_core, link, dlv, pnd);
-            pn_delivery_settle(pnd);
-        } else {
-            //
-            // If the delivery is settled and it is still arriving, defer the settlement
-            // until the content has fully arrived.
-            //
-            if (disp == PN_RELEASED || disp == PN_MODIFIED || qdr_delivery_presettled(dlv)) {
-                //
-                // If the disposition is RELEASED or MODIFIED, set the message to discard
-                // and if it is blocked by holdoff, get the link rolling again.
-                //
-                qdr_delivery_set_disposition(dlv, disp);
-                qd_message_set_discard(msg, true);
-                qd_message_Q2_holdoff_disable(msg);
-                qd_link_restart_rx(link);
-            }
-        }
+        qdr_node_disconnect_deliveries(router->router_core, link, dlv, pnd);
+        pn_delivery_settle(pnd);
+        return true;
     }
+
+    if (discard) {
+        qd_message_t *msg = qdr_delivery_message(dlv);
+        qd_message_set_discard(msg, true);
+        qd_link_restart_rx(link);
+    }
+
+    return false;
 }
 
 

@@ -1106,6 +1106,7 @@ bool qd_message_is_discard(qd_message_t *msg)
     return pvt_msg->content->discard;
 }
 
+
 void qd_message_set_discard(qd_message_t *msg, bool discard)
 {
     if (!msg)
@@ -1113,6 +1114,8 @@ void qd_message_set_discard(qd_message_t *msg, bool discard)
 
     qd_message_pvt_t *pvt_msg = (qd_message_pvt_t*) msg;
     pvt_msg->content->discard = discard;
+    if (discard)
+        qd_message_Q2_holdoff_disable(msg);
 }
 
 
@@ -2143,3 +2146,18 @@ void qd_message_set_aborted(const qd_message_t *msg, bool aborted)
     qd_message_pvt_t * msg_pvt = (qd_message_pvt_t *)msg;
     msg_pvt->content->aborted = aborted;
 }
+
+void qd_message_lock(qd_message_t *msg)
+{
+    if (msg) {
+        LOCK(((qd_message_pvt_t *)msg)->content->lock);
+    }
+}
+
+void qd_message_unlock(qd_message_t *msg)
+{
+    if (msg) {
+        UNLOCK(((qd_message_pvt_t *)msg)->content->lock);
+    }
+}
+

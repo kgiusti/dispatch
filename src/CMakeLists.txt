@@ -75,6 +75,8 @@ set(qpid_dispatch_SOURCES
   router_core/agent_router.c
   router_core/agent_conn_link_route.c
   router_core/connections.c
+  router_core/connection_io.c
+  router_core/link_io.c
   router_core/core_events.c
   router_core/core_link_endpoint.c
   router_core/core_client_api.c

@@ -241,6 +241,8 @@ const char *qdr_connection_get_tenant_space(const qdr_connection_t *conn, int *l
  * @return The number of actions processed.
  */
 int qdr_connection_process(qdr_connection_t *conn);
+void qdr_link_detach_sent(qdr_link_t *link);
+void qdr_link_processing_complete(qdr_core_t *core, qdr_link_t *link);
 
 /**
  * qdr_connection_activate_t callback
@@ -674,8 +676,8 @@ typedef void (*qdr_link_offer_t)         (void *context, qdr_link_t *link, int d
 typedef void (*qdr_link_drained_t)       (void *context, qdr_link_t *link);
 typedef void (*qdr_link_drain_t)         (void *context, qdr_link_t *link, bool mode);
 typedef int  (*qdr_link_push_t)          (void *context, qdr_link_t *link, int limit);
-typedef uint64_t (*qdr_link_deliver_t)   (void *context, qdr_link_t *link, qdr_delivery_t *delivery, bool settled);
-typedef void (*qdr_delivery_update_t)    (void *context, qdr_delivery_t *dlv, uint64_t disp, bool settled);
+typedef bool (*qdr_link_deliver_t)       (void *context, qdr_link_t *link, qdr_delivery_t *delivery);
+typedef bool (*qdr_delivery_update_t)    (void *context, qdr_delivery_t *dlv, uint64_t disp, bool settled, bool discard);
 typedef void (*qdr_connection_close_t)   (void *context, qdr_connection_t *conn, qdr_error_t *error);
 
 void qdr_connection_handlers(qdr_core_t             *core,

@@ -112,9 +112,6 @@ static void setup_outgoing_link(qd_container_t *container, pn_link_t *pn_link)
     }
 
     ZERO(link);
-    sys_mutex_lock(container->lock);
-    DEQ_INSERT_TAIL(container->links, link);
-    sys_mutex_unlock(container->lock);
     link->pn_sess    = pn_link_session(pn_link);
     link->pn_link    = pn_link;
     link->direction  = QD_OUTGOING;
@@ -125,6 +122,11 @@ static void setup_outgoing_link(qd_container_t *container, pn_link_t *pn_link)
     link->drain_mode             = pn_link_get_drain(pn_link);
 
     pn_link_set_context(pn_link, link);
+
+    sys_mutex_lock(container->lock);
+    DEQ_INSERT_TAIL(container->links, link);
+    sys_mutex_unlock(container->lock);
+
     node->ntype->outgoing_handler(node->context, link);
 }
 
@@ -492,8 +494,10 @@ void qd_container_handle_event(qd_container_t *container, pn_event_t *event,
         while (pn_link) {
             if (pn_link_session(pn_link) == ssn) {
                 qd_link_t *qd_link = (qd_link_t*) pn_link_get_context(pn_link);
-                if (qd_link)
+                if (qd_link) {
                     qd_link->pn_link = 0;
+                }
+                pn_link_set_context(pn_link, 0);
             }
             pn_link = pn_link_next(pn_link, PN_LOCAL_ACTIVE | PN_REMOTE_CLOSED);
         }
@@ -544,8 +548,10 @@ void qd_container_handle_event(qd_container_t *container, pn_event_t *event,
                 while (pn_link) {
                     if (pn_link_session(pn_link) == ssn) {
                         qd_link_t *qd_link = (qd_link_t*) pn_link_get_context(pn_link);
-                        if (qd_link)
+                        if (qd_link) {
                             qd_link->pn_link = 0;
+                        }
+                        pn_link_set_context(pn_link, NULL);
                     }
                     pn_link = pn_link_next(pn_link, PN_LOCAL_ACTIVE | PN_REMOTE_CLOSED);
                 }
