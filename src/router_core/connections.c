@@ -223,6 +223,9 @@ const char *qdr_connection_get_tenant_space(const qdr_connection_t *conn, int *l
 }
 
 
+int kag_counts[QDR_MAX_PRIORITY + 1];
+
+
 int qdr_connection_process(qdr_connection_t *conn)
 {
     qdr_connection_work_list_t  work_list;
@@ -321,6 +324,7 @@ int qdr_connection_process(qdr_connection_t *conn)
                         int count = core->push_handler(core->user_context, link, link_work->value);
                         assert(count <= link_work->value);
                         link_work->value -= count;
+                        kag_counts[priority] += count;
                         break;
                     }
 
@@ -1385,6 +1389,7 @@ static void qdr_attach_link_data_CT(qdr_core_t *core, qdr_connection_t *conn, qd
             return;
         }
         link->priority = next_slot;
+        qd_log(core->log, QD_LOG_ERROR, "KAG: conn %p link %p priority %d", conn, link, next_slot);
         core->data_links_by_mask_bit[conn->mask_bit].links[next_slot] = link;
     }
 }

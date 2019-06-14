@@ -20,6 +20,9 @@
 #include "router_core_private.h"
 #include "module.h"
 
+
+extern int kag_counts[];
+
 /**
  * Creates a thread that is dedicated to managing and using the routing table.
  * The purpose of moving this function into one thread is to remove the widespread
@@ -179,6 +182,10 @@ void *router_core_thread(void *arg)
             qdr_post_general_work_CT(core, work);
         }
     }
+
+    qd_log(core->log, QD_LOG_ERROR, "DELIVERIES PER PRIORITY: 9=%d 8=%d 7=%d 6=%d 5=%d 4(default)=%d 3=%d 2=%d 1=%d 0=%d",
+           kag_counts[9], kag_counts[8], kag_counts[7], kag_counts[6], kag_counts[5], kag_counts[4],
+           kag_counts[3], kag_counts[2], kag_counts[1], kag_counts[0]);
 
     qd_log(core->log, QD_LOG_INFO, "Router Core thread exited");
     return 0;

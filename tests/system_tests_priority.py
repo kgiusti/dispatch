@@ -26,6 +26,7 @@ from __future__ import print_function
 import unittest2 as unittest
 from proton          import Message, Timeout
 from system_test     import TestCase, Qdrouterd, main_module, Process
+from system_test     import TIMEOUT
 from proton.handlers import MessagingHandler
 from proton.reactor  import Container
 
@@ -217,7 +218,7 @@ class PriorityTests ( TestCase ):
                            )
 
 
-    def test_priority ( self ):
+    def notest_priority ( self ):
         name = 'test_01'
         test = Priority ( self,
                           name,
@@ -475,6 +476,213 @@ class Priority ( MessagingHandler ):
         Container(self).run()
 
 
+#================================================================
+#     Congestion test
+#
+# Ensure priority is enforced 
+#================================================================
+
+class CongestionTests(TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        super(CongestionTests, cls).setUpClass()
+        cls.test_targets = ['p9/a', 'p7/b', 'p2/c', 'closest/d']
+
+        def router(name, more_config):
+
+            config = [ ('router',  {'mode': 'interior', 'id': name, 'workerThreads': 4}),
+                       ('address', {'prefix': 'closest',   'distribution': 'closest'}),
+                       ('address', {'prefix': 'balanced',  'distribution': 'balanced'}),
+                       ('address', {'prefix': 'multicast', 'distribution': 'multicast'}),
+
+                       ('address', {'prefix': 'p9', 'priority': 9, 'distribution': 'closest'}),
+                       ('address', {'prefix': 'p7', 'priority': 7, 'distribution': 'closest'}),
+                       ('address', {'prefix': 'p2', 'priority': 2, 'distribution': 'closest'})
+            ] + more_config
+
+            config = Qdrouterd.Config(config)
+            cls.routers.append(cls.tester.qdrouterd(name, config, wait=False))
+
+        cls.routers = []
+
+        A_client_port = cls.tester.get_port()
+        B_client_port = cls.tester.get_port()
+        C_client_port = cls.tester.get_port()
+
+        B_inter_router_port = cls.tester.get_port()
+
+        A_config = [
+            ( 'listener',
+              { 'port'             : A_client_port,
+                'role'             : 'normal',
+                'linkCapacity'     : 1000
+              }
+            ),
+            ( 'connector',
+              { 'name'             : 'B_connector',
+                'role'             : 'inter-router',
+                'port'             : B_inter_router_port,
+                'verifyHostname'   : 'no',
+                'stripAnnotations' : 'no',
+                'linkCapacity'     : 10
+              }
+            )
+        ]
+
+        B_config = [
+            ( 'listener',
+              { 'port'             : B_client_port,
+                'role'             : 'normal'
+              }
+            ),
+            ( 'listener',
+              { 'role'             : 'inter-router',
+                'port'             : B_inter_router_port,
+                'stripAnnotations' : 'no',
+                'linkCapacity'     : 10
+              }
+            )
+        ]
+
+        C_config = [
+            ( 'listener',
+              { 'port'             : C_client_port,
+                'role'             : 'normal',
+                'linkCapacity'     : 1000
+              }
+            ),
+            ( 'connector',
+              { 'name'             : 'B_connector',
+                'role'             : 'inter-router',
+                'port'             : B_inter_router_port,
+                'verifyHostname'   : 'no',
+                'stripAnnotations' : 'no',
+                'linkCapacity'     : 10
+              }
+            )
+        ]
+
+        router('A', A_config)
+        router('B', B_config)
+        router('C', C_config)
+
+        cls.router_A = cls.routers[0]
+        cls.router_B = cls.routers[1]
+        cls.router_C = cls.routers[2]
+
+        cls.router_B.wait_router_connected('A')
+        cls.router_B.wait_router_connected('C')
+
+    def test_congestion(self):
+        test = Congestion(self)
+        test.run()
+        self.assertEqual(None, test.error)
+
+
+#================================================================
+#     Tests
+#================================================================
+
+
+class Congestion(MessagingHandler):
+
+
+    def __init__ (self, parent):
+        super(Congestion, self).__init__(prefetch=None,
+                                         auto_accept=False,
+                                         auto_settle=False)
+
+        self.parent = parent
+        self.error = None
+        self.senders = []
+        self.send_conns = []
+        self.receivers = []
+        self.recv_conns = []
+
+        self.n_messages      = 100
+
+        self.reactor         = None
+        self.timer           = None
+        self.msg = Message(body="Congestion")
+        self.recv_complete = []
+
+    # Shut down everything and exit.
+    def bail(self):
+        self.timer.cancel()
+        for conn in self.send_conns + self.recv_conns:
+            conn.close()
+
+    def timeout(self, ignored):
+        self.error = "Timeout Expired"
+        for rcvr in self.receivers:
+            print(" rx: %d" % rcvr.my_count)
+        self.bail()
+
+    def on_start(self, event):
+        self.reactor = event.reactor
+        self.timer = self.reactor.schedule(TIMEOUT, Timeout(self, "hang"))
+        for target in self.parent.test_targets:
+            sconn = event.container.connect(self.parent.router_A.addresses[0])
+            self.send_conns.append(sconn)
+            sender = event.container.create_sender(sconn, target)
+            sender.my_target = target
+            sender.my_count = 0
+            rconn = event.container.connect(self.parent.router_C.addresses[0])
+            self.recv_conns.append(rconn)
+            receiver = event.container.create_receiver(rconn, target)
+            receiver.my_source = target
+            receiver.my_count = 0
+
+
+    def on_link_opened(self, event):
+        if event.receiver and event.receiver not in self.receivers:
+            self.receivers.append(event.receiver)
+        elif event.sender and event.sender not in self.senders:
+            self.senders.append(event.sender)
+
+        target_ct = len(self.parent.test_targets)
+        if len(self.senders) == target_ct and len(self.receivers) == target_ct:
+            # all links are open - wait for the addresses to propagate
+            for address in self.parent.test_targets:
+                self.parent.router_A.wait_address(address)
+            # now start senders
+            for rcv in self.receivers:
+                rcv.flow(self.n_messages)
+
+    def on_sendable(self, event):
+        sender = event.sender
+        while sender.my_count < self.n_messages and sender.credit > 0:
+            sender.send(self.msg)
+            sender.my_count += 1
+
+    def on_message(self, event):
+        if event.delivery.partial:
+            return
+
+
+        # rsp = self.parent.router_B.management.query(type="org.apache.qpid.dispatch.router.address")
+
+        # import sys
+        # print("ADDR=%s" % rsp)
+        # sys.stdout.flush()
+
+        # rsp = self.parent.router_B.management.query(type="org.apache.qpid.dispatch.router.config.address")
+
+        # import sys
+        # print("CFG=%s" % rsp)
+        # sys.stdout.flush()
+        
+        event.delivery.settle()
+        receiver = event.receiver
+        receiver.my_count += 1
+        if receiver.my_count == self.n_messages:
+            self.recv_complete.append(receiver.my_source)
+            if len(self.recv_complete) == len(self.receivers):
+                self.bail()
+
+    def run(self):
+        Container(self).run()
 
 
 if __name__ == '__main__':
