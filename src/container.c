@@ -35,6 +35,10 @@
 #include <qpid/dispatch/iterator.h>
 #include <qpid/dispatch/log.h>
 
+#include <limits.h>
+
+int MWAG_prefetch = INT_MAX;
+
 /** Instance of a node type in a container */
 struct qd_node_t {
     DEQ_LINKS(qd_node_t);
@@ -184,7 +188,7 @@ static void do_receive(pn_link_t *pn_link, pn_delivery_t *pnd)
     if (link) {
         qd_node_t *node = link->node;
         if (node) {
-            while (true) {
+            for (int i = 0; i < MWAG_prefetch; ++i) {
                 if (!node->ntype->rx_handler(node->context, link))
                     break;
             }

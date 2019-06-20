@@ -39,9 +39,9 @@ static const char* argv0 = 0;
 
 //
 extern int MWAG_wakeup;
-extern int  MWAG_prefetch;
-extern int  MWAG_in_limit;
-extern int  MWAG_out_limit;
+extern int MWAG_prefetch;
+extern int MWAG_in_limit;
+extern int MWAG_out_limit;
 //
 
 
@@ -328,9 +328,9 @@ int main(int argc, char **argv)
 
     {"MWAG-bufsize",   required_argument, 0, 'B'},
     {"MWAG-wakeup",    optional_argument, 0, 'W'},
-    /* {"MWAG-in-limit",  required_argument, 0, 'R'},
-    {"MWAG-out-limit", required_argument, 0, 'S'},
-    {"MWAG-prefetch",  required_argument, 0, 'F'}, */
+    {"MWAG-prefetch",  required_argument, 0, 'F'},
+    /* {"MWAG-in-limit",  required_argument, 0, 'R'}, */
+    /* {"MWAG-out-limit", required_argument, 0, 'S'}, */
 
     {0,         0,                 0,  0}
     };
@@ -436,13 +436,12 @@ int main(int argc, char **argv)
 
         case 'F':  // MWAG-prefetch
         {
-            fprintf(stdout, " TBD !\n");
-            /* rc = sscanf(optarg, "%d", &MWAG_prefetch); */
-            /* if (rc != 1 || MWAG_prefetch < 0) { */
-            /*     perror("MWAG-prefetch invalid"); */
-            /*     exit(-1); */
-            /* } */
-            /* fprintf(stdout, "   MWAG-prefetch =  %d\n", MWAG_prefetch); */
+            int rc = sscanf(optarg, "%d", &MWAG_prefetch);
+            if (rc != 1 || MWAG_prefetch <= 0) {
+                perror("MWAG-prefetch invalid");
+                exit(-1);
+            }
+            fprintf(stdout, "   MWAG-prefetch =  %d\n", MWAG_prefetch);
         }
         break;
 

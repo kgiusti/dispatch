@@ -21,6 +21,7 @@
 #include "module.h"
 
 int MWAG_wakeup = 0;
+extern const int MWAG_prefetch;
 
 /**
  * Creates a thread that is dedicated to managing and using the routing table.
@@ -138,8 +139,8 @@ void *router_core_thread(void *arg)
 
     //
     qd_log(core->log, QD_LOG_WARNING,
-           "RUNNING HACKED PERF ANALYSIS BUILD!!!  MWAG_wakeup=%d MWAG_bufsize=%d",
-           MWAG_wakeup, BUFFER_SIZE);
+           "RUNNING HACKED PERF ANALYSIS BUILD!!!  MWAG_wakeup=%d MWAG_bufsize=%d MWAG_prefetch=%d",
+           MWAG_wakeup, BUFFER_SIZE, MWAG_prefetch);
     //
 
     while (core->running) {
