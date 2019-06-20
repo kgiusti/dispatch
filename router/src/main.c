@@ -37,6 +37,14 @@ static qd_log_source_t *log_source = 0;
 static const char* argv0 = 0;
 
 
+//
+extern int MWAG_wakeup;
+extern int  MWAG_prefetch;
+extern int  MWAG_in_limit;
+extern int  MWAG_out_limit;
+//
+
+
 /**
  * This is the OS signal handler, invoked on an undetermined thread at a completely
  * arbitrary point of time.
@@ -288,6 +296,14 @@ void usage(char **argv) {
     fprintf(stdout, "  -T, --test-hooks           Enable internal system testing features\n");
     fprintf(stdout, "  -v, --version              Print the version of Qpid Dispatch Router\n");
     fprintf(stdout, "  -h, --help                 Print this help\n");
+
+    //
+    fprintf(stdout, "  -B, --MWAG-bufsize <N>    per buffer memory area in bytes (N must be >= 512)\n");
+    fprintf(stdout, "  -W, --MWAG-wakeup         enable immediate I/O thread activation\n");
+    fprintf(stdout, "  -F, --MWAG-prefetch <N>   prefetch N msgs per incoming link\n");
+    fprintf(stdout, "  -R, --MWAG-in-limit       # of messages per RX batch\n");
+    fprintf(stdout, "  -S, --MWAG-out-limit      # of messages per TX batch\n");
+    //
 }
 
 int main(int argc, char **argv)
@@ -309,11 +325,18 @@ int main(int argc, char **argv)
     {"help",    no_argument,       0, 'h'},
     {"version", no_argument,       0, 'v'},
     {"test-hooks", no_argument,    0, 'T'},
+
+    {"MWAG-bufsize",   required_argument, 0, 'B'},
+    {"MWAG-wakeup",    optional_argument, 0, 'W'},
+    /* {"MWAG-in-limit",  required_argument, 0, 'R'},
+    {"MWAG-out-limit", required_argument, 0, 'S'},
+    {"MWAG-prefetch",  required_argument, 0, 'F'}, */
+
     {0,         0,                 0,  0}
     };
 
     while (1) {
-        int c = getopt_long(argc, argv, "c:I:dP:U:h:vT", long_options, 0);
+        int c = getopt_long(argc, argv, "c:I:dP:U:h:vT" "B:W::R:S:F:", long_options, 0);
         if (c == -1)
             break;
 
@@ -353,6 +376,80 @@ int main(int argc, char **argv)
         case '?' :
             usage(argv);
             exit(1);
+
+
+
+
+            //
+        case 'B':  // MWAG-bufsize
+        {
+            size_t bs = 0;
+            int rc = sscanf(optarg, "%zu", &bs);
+            if (rc != 1 || bs < 512) {
+                perror("MWAG-bufsize too small/invalid - must be >= 512");
+                exit(-1);
+            }
+            qd_buffer_set_size(bs);
+            fprintf(stdout, "   MWAG-bufsize =   %d\n", (int)bs);
+        }
+        break;
+
+        case 'W':  // MWAG-wakeup
+        {
+            if (optarg) {
+                int rc = sscanf(optarg, "%d", &MWAG_wakeup);
+                if (rc != 1 || MWAG_wakeup < 0) {
+                    perror("MWAG-wakeup invalid");
+                    exit(-1);
+                }
+            } else {
+                MWAG_wakeup = 1;
+            }
+            fprintf(stdout, "   MWAG-wakeup =    %d\n", MWAG_wakeup);
+        }
+        break;
+
+        case 'R':  // MWAG-in-limit
+        {
+            fprintf(stdout, " TBD !\n");
+            /* rc = sscanf(optarg, "%d", &MWAG_in_limit); */
+            /* if (rc != 1 || MWAG_in_limit < 0) { */
+            /*     perror("MWAG-in-limit invalid"); */
+            /*     exit(-1); */
+            /* } */
+            /* fprintf(stdout, "   MWAG-in-limit =  %d\n", MWAG_in_limit); */
+        }
+        break;
+
+        case 'S':  // MWAG-out-limit
+        {
+            fprintf(stdout, " TBD !\n");
+            /* rc = sscanf(optarg, "%d", &MWAG_out_limit); */
+            /* if (rc != 1 || MWAG_out_limit < 0) { */
+            /*     perror("MWAG-out-limit invalid"); */
+            /*     exit(-1); */
+            /* } */
+            /* fprintf(stdout, "   MWAG-out-limit = %d\n", MWAG_out_limit); */
+
+        }
+        break;
+
+        case 'F':  // MWAG-prefetch
+        {
+            fprintf(stdout, " TBD !\n");
+            /* rc = sscanf(optarg, "%d", &MWAG_prefetch); */
+            /* if (rc != 1 || MWAG_prefetch < 0) { */
+            /*     perror("MWAG-prefetch invalid"); */
+            /*     exit(-1); */
+            /* } */
+            /* fprintf(stdout, "   MWAG-prefetch =  %d\n", MWAG_prefetch); */
+        }
+        break;
+
+
+//
+
+
         }
     }
     if (optind < argc) {

@@ -20,6 +20,8 @@
 #include "router_core_private.h"
 #include "module.h"
 
+int MWAG_wakeup = 0;
+
 /**
  * Creates a thread that is dedicated to managing and using the routing table.
  * The purpose of moving this function into one thread is to remove the widespread
@@ -133,6 +135,13 @@ void *router_core_thread(void *arg)
     qdr_modules_init(core);
 
     qd_log(core->log, QD_LOG_INFO, "Router Core thread running. %s/%s", core->router_area, core->router_id);
+
+    //
+    qd_log(core->log, QD_LOG_WARNING,
+           "RUNNING HACKED PERF ANALYSIS BUILD!!!  MWAG_wakeup=%d MWAG_bufsize=%d",
+           MWAG_wakeup, BUFFER_SIZE);
+    //
+
     while (core->running) {
         //
         // Use the lock only to protect the condition variable and the action list
@@ -155,6 +164,7 @@ void *router_core_thread(void *arg)
         //
         // Process and free all of the action items in the list
         //
+        int wag = 0;
         action = DEQ_HEAD(action_list);
         while (action) {
             DEQ_REMOVE_HEAD(action_list);
@@ -163,6 +173,11 @@ void *router_core_thread(void *arg)
             action->action_handler(core, action, !core->running);
             free_qdr_action_t(action);
             action = DEQ_HEAD(action_list);
+
+            if (action && MWAG_wakeup && ++wag >= MWAG_wakeup && DEQ_HEAD(core->connections_to_activate)) {
+                qdr_activate_connections_CT(core);
+                wag = 0;
+            }
         }
 
         //
