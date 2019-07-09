@@ -24,6 +24,7 @@
 #include <qpid/dispatch/iterator.h>
 #include <qpid/dispatch/log.h>
 #include <qpid/dispatch/buffer.h>
+#include <qpid/dispatch/hw_clock.h>
 #include <proton/object.h>
 #include "message_private.h"
 #include "compose_private.h"
@@ -1270,6 +1271,9 @@ qd_message_t *qd_message_receive(pn_delivery_t *delivery)
         msg->strip_annotations_in  = qd_connection_strip_annotations_in(qdc);
         pn_record_def(record, PN_DELIVERY_CTX, PN_WEAKREF);
         pn_record_set(record, PN_DELIVERY_CTX, (void*) msg);
+#ifdef QD_MESSAGE_TIMING
+        msg->content->create_time = qd_hw_clock_usec();
+#endif
     }
 
     //
@@ -2145,3 +2149,36 @@ void qd_message_set_aborted(const qd_message_t *msg, bool aborted)
     qd_message_pvt_t * msg_pvt = (qd_message_pvt_t *)msg;
     msg_pvt->content->aborted = aborted;
 }
+
+
+#ifdef QD_MESSAGE_TIMING
+int64_t *msg_create_time(qd_message_t *msg)
+{
+    qd_message_pvt_t * msg_pvt = (qd_message_pvt_t *)msg;
+    return &msg_pvt->content->create_time;
+}
+
+int64_t *msg_action_time(qd_message_t *msg)
+{
+    qd_message_pvt_t * msg_pvt = (qd_message_pvt_t *)msg;
+    return &msg_pvt->content->action_time;
+}
+
+int64_t *msg_fwd_time(qd_message_t *msg)
+{
+    qd_message_pvt_t * msg_pvt = (qd_message_pvt_t *)msg;
+    return &msg_pvt->content->fwd_time;
+}
+
+int64_t *msg_undelivered_time(qd_message_t *msg)
+{
+    qd_message_pvt_t * msg_pvt = (qd_message_pvt_t *)msg;
+    return &msg_pvt->content->undelivered_time;
+}
+
+int64_t *msg_tx_time(qd_message_t *msg)
+{
+    qd_message_pvt_t * msg_pvt = (qd_message_pvt_t *)msg;
+    return &msg_pvt->content->tx_time;
+}
+#endif

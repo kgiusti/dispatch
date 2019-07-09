@@ -423,6 +423,13 @@ void qd_message_set_aborted(const qd_message_t *msg, bool aborted);
  */
 uint8_t qd_message_get_priority(qd_message_t *msg);
 
+#ifdef QD_MESSAGE_TIMING
+int64_t *msg_create_time(qd_message_t *msg);
+int64_t *msg_action_time(qd_message_t *msg);
+int64_t *msg_fwd_time(qd_message_t *msg);
+int64_t *msg_undelivered_time(qd_message_t *msg);
+int64_t *msg_tx_time(qd_message_t *msg);
+#endif
 
 ///@}
 

@@ -23,6 +23,7 @@
 #include <qpid/dispatch/amqp.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include <qpid/dispatch/hw_clock.h>
 
 
 //==================================================================================
@@ -61,6 +62,9 @@ qdr_delivery_t *qdr_link_deliver(qdr_link_t *link, qd_message_t *msg, qd_iterato
 
     action->args.connection.delivery = dlv;
     action->args.connection.more = !qd_message_receive_complete(msg);
+#ifdef QD_MESSAGE_TIMING
+    *msg_action_time(msg) = qd_hw_clock_usec();
+#endif
     qdr_action_enqueue(link->core, action);
     return dlv;
 }
@@ -90,6 +94,9 @@ qdr_delivery_t *qdr_link_deliver_to(qdr_link_t *link, qd_message_t *msg,
 
     action->args.connection.delivery = dlv;
     action->args.connection.more = !qd_message_receive_complete(msg);
+#ifdef QD_MESSAGE_TIMING
+    *msg_action_time(msg) = qd_hw_clock_usec();
+#endif
     qdr_action_enqueue(link->core, action);
     return dlv;
 }
@@ -119,6 +126,9 @@ qdr_delivery_t *qdr_link_deliver_to_routed_link(qdr_link_t *link, qd_message_t *
     action->args.connection.tag_length = tag_length;
     assert(tag_length <= QDR_DELIVERY_TAG_MAX);
     memcpy(action->args.connection.tag, tag, tag_length);
+#ifdef QD_MESSAGE_TIMING
+    *msg_action_time(msg) = qd_hw_clock_usec();
+#endif
     qdr_action_enqueue(link->core, action);
     return dlv;
 }
@@ -143,6 +153,12 @@ int qdr_link_process_deliveries(qdr_core_t *core, qdr_link_t *link, int credit)
             sys_mutex_lock(conn->work_lock);
             dlv = DEQ_HEAD(link->undelivered);
             if (dlv) {
+
+#ifdef QD_MESSAGE_TIMING
+                if (*msg_tx_time(dlv->msg) == 0) {
+                    *msg_tx_time(dlv->msg) = qd_hw_clock_usec();
+                }
+#endif
                 qdr_delivery_incref(dlv, "qdr_link_process_deliveries - holding the undelivered delivery locally");
                 uint64_t new_disp = 0;
 
@@ -192,6 +208,20 @@ int qdr_link_process_deliveries(qdr_core_t *core, qdr_link_t *link, int credit)
                         dlv->where = QDR_DELIVERY_IN_UNSETTLED;
                         qd_log(core->log, QD_LOG_DEBUG, "Delivery transfer:  dlv:%lx qdr_link_process_deliveries: undelivered-list -> unsettled-list", (long) dlv);
                     }
+
+#ifdef QD_MESSAGE_TIMING
+                    {
+                        int64_t now = qd_hw_clock_usec();
+                        // rx processing time starts at creation and ends with msg queued to core
+                        link->total_rx_time += *msg_action_time(dlv->msg) - *msg_create_time(dlv->msg);
+                        link->total_action_time += *msg_fwd_time(dlv->msg) - *msg_action_time(dlv->msg);
+                        link->total_fwd_time += *msg_undelivered_time(dlv->msg) - *msg_fwd_time(dlv->msg);
+                        link->total_undelivered_time += *msg_tx_time(dlv->msg) - *msg_undelivered_time(dlv->msg);
+                        link->total_tx_time += now - *msg_tx_time(dlv->msg);
+                        link->total_count++;
+                    }
+#endif
+
                 }
                 else {
                     qdr_delivery_decref(core, dlv, "qdr_link_process_deliveries - release local reference - not send_complete");
@@ -602,6 +632,12 @@ static void qdr_link_deliver_CT(qdr_core_t *core, qdr_action_t *action, bool dis
 
     if (!link)
         return;
+
+#ifdef QD_MESSAGE_TIMING
+    if (dlv->msg) {
+        *msg_fwd_time(dlv->msg) = qd_hw_clock_usec();
+    }
+#endif
 
     //
     // Record the ingress time so we can track the age of this delivery.

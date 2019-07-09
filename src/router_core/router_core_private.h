@@ -463,6 +463,17 @@ struct qdr_link_t {
     uint8_t   priority;
     uint8_t   rate_cursor;
     uint32_t  core_ticks;
+
+
+
+#ifdef QD_MESSAGE_TIMING
+    int64_t total_rx_time;
+    int64_t total_action_time;
+    int64_t total_fwd_time;
+    int64_t total_undelivered_time;
+    int64_t total_tx_time;
+    int64_t total_count;
+#endif
 };
 
 DEQ_DECLARE(qdr_link_t, qdr_link_list_t);

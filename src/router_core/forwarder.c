@@ -23,6 +23,8 @@
 #include <strings.h>
 #include "forwarder.h"
 #include "delivery.h"
+#include <qpid/dispatch/hw_clock.h>
+
 
 typedef struct qdr_forward_deliver_info_t {
     DEQ_LINKS(struct qdr_forward_deliver_info_t);
@@ -235,6 +237,11 @@ void qdr_forward_deliver_CT(qdr_core_t *core, qdr_link_t *out_link, qdr_delivery
     qdr_add_link_ref(out_link->conn->links_with_work + out_link->priority, out_link, QDR_LINK_LIST_CLASS_WORK);
 
     out_dlv->link_work = work;
+
+#ifdef QD_MESSAGE_TIMING
+    *msg_undelivered_time(out_dlv->msg) = qd_hw_clock_usec();
+#endif
+    
     sys_mutex_unlock(out_link->conn->work_lock);
 
     //

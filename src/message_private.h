@@ -121,6 +121,15 @@ typedef struct {
     bool                 priority_parsed;
     bool                 priority_present;
     uint8_t              priority;                       // The priority of this message
+
+#ifdef QD_MESSAGE_TIMING
+    // timestamps for various points in the message forwarding path
+    int64_t  create_time;       // timestamp when message created
+    int64_t  action_time;       // when message placed on core action queue
+    int64_t  fwd_time;          // when message taken off core action queue
+    int64_t  undelivered_time;  // when message put on undelivered list by core thread
+    int64_t  tx_time;           // when message starts transmit
+#endif
 } qd_message_content_t;
 
 typedef struct {

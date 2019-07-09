@@ -857,6 +857,21 @@ static void qdr_link_abort_undelivered_CT(qdr_core_t *core, qdr_link_t *link)
 
 static void qdr_link_cleanup_CT(qdr_core_t *core, qdr_connection_t *conn, qdr_link_t *link, const char *log_text)
 {
+
+
+#ifdef QD_MESSAGE_TIMING
+    if (link->total_count) {
+        printf("%s: link %s count=%"PRIi64" rx=%.3f aq=%.3f fwd=%.3f uq=%.3f tx=%.3f \n",
+               core->router_id, link->name,
+               link->total_count,
+               (double)link->total_rx_time / (double)link->total_count,
+               (double)link->total_action_time / (double)link->total_count,
+               (double)link->total_fwd_time / (double)link->total_count,
+               (double)link->total_undelivered_time / (double)link->total_count,
+               (double)link->total_tx_time / (double)link->total_count);
+    }
+#endif
+
     //
     // Remove the link from the master list of links
     //
