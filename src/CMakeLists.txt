@@ -61,6 +61,7 @@ set(qpid_dispatch_SOURCES
   proton_utils.c
   remote_sasl.c
   posix/threading.c
+  posix/hw_clock.c
   python_embedded.c
   router_agent.c
   router_config.c
