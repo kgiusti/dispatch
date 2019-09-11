@@ -331,6 +331,9 @@ static void qdr_forward_to_subscriber(qdr_core_t *core, qdr_subscription_t *sub,
 }
 
 
+uint32_t KAG_last_tick;
+uint64_t KAG_mcast_in;
+uint64_t KAG_mcast_out;
 int qdr_forward_multicast_CT(qdr_core_t      *core,
                              qdr_address_t   *addr,
                              qd_message_t    *msg,
@@ -344,6 +347,8 @@ int qdr_forward_multicast_CT(qdr_core_t      *core,
     bool          receive_complete     = qd_message_receive_complete(qdr_delivery_message(in_delivery));
     uint8_t       priority             = qdr_forward_effective_priority(msg, addr);
 
+    KAG_mcast_in++;
+    
     qdr_forward_deliver_info_list_t deliver_info_list;
     DEQ_INIT(deliver_info_list);
 
@@ -475,12 +480,20 @@ int qdr_forward_multicast_CT(qdr_core_t      *core,
         }
     }
 
+    KAG_mcast_out += DEQ_SIZE(deliver_info_list);
+
     qdr_forward_deliver_info_t *deliver_info = DEQ_HEAD(deliver_info_list);
     while (deliver_info) {
         qdr_forward_deliver_CT(core, deliver_info->out_link, deliver_info->out_dlv);
         DEQ_REMOVE_HEAD(deliver_info_list);
         free_qdr_forward_deliver_info_t(deliver_info);
         deliver_info = DEQ_HEAD(deliver_info_list);
+    }
+
+    if ((core->uptime_ticks - KAG_last_tick) >= 10) {
+        qd_log(core->log, QD_LOG_TRACE, "MICK! - mcast in: %lu out: %lu",
+               KAG_mcast_in, KAG_mcast_out);
+        KAG_last_tick = core->uptime_ticks;
     }
 
     return fanout;
