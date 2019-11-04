@@ -25,6 +25,7 @@ from __future__ import print_function
 from proton import Message, Timeout
 from system_test import TestCase, Qdrouterd, main_module
 from system_test import unittest
+from system_test import TIMEOUT
 from proton.handlers import MessagingHandler
 from proton.reactor import Container
 from qpid_dispatch_internal.compat import BINARY
@@ -202,7 +203,7 @@ class MessageRouteTruncateTest(MessagingHandler):
         self.receiver_conn.close()
 
     def on_start(self, event):
-        self.timer         = event.reactor.schedule(10.0, Timeout(self))
+        self.timer         = event.reactor.schedule(TIMEOUT, Timeout(self))
         self.sender_conn   = event.container.connect(self.sender_host)
         self.receiver_conn = event.container.connect(self.receiver_host)
         self.sender1       = event.container.create_sender(self.sender_conn, self.address, name="S1")
@@ -305,7 +306,7 @@ class LinkRouteTruncateTest(MessagingHandler):
             self.poll_timer.cancel()
 
     def on_start(self, event):
-        self.timer          = event.reactor.schedule(10.0, Timeout(self))
+        self.timer          = event.reactor.schedule(TIMEOUT, Timeout(self))
         self.sender_conn    = event.container.connect(self.sender_host)
         self.receiver_conn  = event.container.connect(self.receiver_host)
         self.query_conn     = event.container.connect(self.query_host)
@@ -418,7 +419,7 @@ class MessageRouteAbortTest(MessagingHandler):
         self.receiver_conn.close()
 
     def on_start(self, event):
-        self.timer         = event.reactor.schedule(10.0, Timeout(self))
+        self.timer         = event.reactor.schedule(TIMEOUT, Timeout(self))
         self.sender_conn   = event.container.connect(self.sender_host)
         self.receiver_conn = event.container.connect(self.receiver_host)
         self.sender1       = event.container.create_sender(self.sender_conn, self.address, name="S1")
@@ -513,7 +514,7 @@ class MulticastTruncateTest(MessagingHandler):
         self.receiver2_conn.close()
 
     def on_start(self, event):
-        self.timer          = event.reactor.schedule(10.0, Timeout(self))
+        self.timer          = event.reactor.schedule(TIMEOUT, Timeout(self))
         self.sender_conn    = event.container.connect(self.sender_host)
         self.receiver1_conn = event.container.connect(self.receiver_host1)
         self.receiver2_conn = event.container.connect(self.receiver_host2)

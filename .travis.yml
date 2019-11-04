@@ -53,6 +53,10 @@ matrix:
     env:
     - PATH="/usr/bin:$PATH" PROTON_VERSION=0.29.0 BUILD_TYPE=RelWithDebInfo
     - DISPATCH_CMAKE_ARGS='-DRUNTIME_CHECK=asan'
+  - os: linux
+    env:
+    - PATH="/usr/bin:$PATH" PROTON_VERSION=0.29.0 BUILD_TYPE=RelWithDebInfo
+    - DISPATCH_CMAKE_ARGS='-DRUNTIME_CHECK=tsan'
   - os: osx
     osx_image: xcode10.1
     env:

@@ -27,12 +27,13 @@ from time import sleep
 from threading import Event
 from threading import Timer
 
-from proton import Message, Timeout
+from proton import Message #, Timeout
 from system_test import TestCase, Qdrouterd, main_module, TIMEOUT, MgmtMsgProxy
 from system_test import AsyncTestReceiver
 from system_test import AsyncTestSender
 from system_test import QdManager
 from system_test import unittest
+from system_test import TIMEOUT
 from system_tests_link_routes import ConnLinkRouteService
 from test_broker import FakeService
 from proton.handlers import MessagingHandler
@@ -48,7 +49,7 @@ class AddrTimer(object):
         self.parent = parent
 
     def on_timer_task(self, event):
-            self.parent.check_address()
+        self.parent.check_address()
 
 
 class EdgeRouterTest(TestCase):
@@ -238,14 +239,14 @@ class EdgeRouterTest(TestCase):
             self.assertTrue(self.success)
 
 
-class RouterTest(TestCase):
+class RouterTestBase(TestCase):
 
     inter_router_port = None
 
     @classmethod
     def setUpClass(cls):
         """Start a router"""
-        super(RouterTest, cls).setUpClass()
+        super(RouterTestBase, cls).setUpClass()
 
         def router(name, mode, connection, extra=None):
             config = [
@@ -288,6 +289,11 @@ class RouterTest(TestCase):
         cls.routers[1].wait_router_connected('INT.A')
 
 
+class RouterTest1(RouterTestBase):
+
+    @classmethod
+    def setUpClass(cls):
+        super(RouterTest1, cls).setUpClass()
         cls.skip = { 'test_01' : 0,
                      'test_02' : 0,
                      'test_03' : 0,
@@ -310,51 +316,7 @@ class RouterTest(TestCase):
                      'test_20' : 0,
                      'test_21' : 0,
                      'test_22' : 0,
-                     'test_23' : 0,
-                     'test_24' : 0,
-                     'test_25' : 0,
-                     'test_26' : 0,
-                     'test_27' : 0,
-                     'test_28' : 0,
-                     'test_29' : 0,
-                     'test_30' : 0,
-                     'test_31' : 0,
-                     'test_32' : 0,
-                     'test_33' : 0,
-                     'test_34' : 0,
-                     'test_35' : 0,
-                     'test_36' : 0,
-                     'test_37' : 0,
-                     'test_38' : 0,
-                     'test_39' : 0,
-                     'test_40' : 0,
-                     'test_41' : 0,
-                     'test_42' : 0,
-                     'test_43':  0,
-                     'test_44':  0,
-                     'test_45':  0,
-                     'test_46':  0,
-                     'test_47':  0,
-                     'test_48':  0,
-                     'test_49':  0,
-                     'test_50':  0,
-                     'test_51':  0,
-                     'test_52':  0,
-                     'test_53':  0,
-                     'test_54':  0,
-                     'test_55':  0,
-                     'test_56':  0,
-                     'test_57':  0,
-                     'test_58':  0,
-                     'test_59':  0,
-                     'test_60':  0,
-                     'test_61':  0,
-                     'test_62':  0,
-                     'test_63':  0,
-                     'test_64':  0,
-                     'test_65':  0,
-                     'test_66':  0,
-                     'test_67':  0
+                     'test_23' : 0
                    }
 
     def test_01_connectivity_INTA_EA1(self):
@@ -606,6 +568,28 @@ class RouterTest(TestCase):
         test.run()
         self.assertEqual(None, test.error)
 
+
+class RouterTest2(RouterTestBase):
+
+    @classmethod
+    def setUpClass(cls):
+        super(RouterTest2, cls).setUpClass()
+        cls.skip = { 'test_24' : 0,
+                     'test_25' : 0,
+                     'test_26' : 0,
+                     'test_27' : 0,
+                     'test_28' : 0,
+                     'test_29' : 0,
+                     'test_30' : 0,
+                     'test_31' : 0,
+                     'test_32' : 0,
+                     'test_33' : 0,
+                     'test_34' : 0,
+                     'test_35' : 0,
+                     'test_36' : 0,
+                     'test_37' : 0
+                   }
+        
     # 1 Sender and 3 receivers all on the same edge
     def test_24_multicast_mobile_address_same_edge(self):
         if self.skip [ 'test_24' ] :
@@ -805,6 +789,44 @@ class RouterTest(TestCase):
                                           large_msg=True)
         test.run()
         self.assertEqual(None, test.error)
+
+
+class RouterTest3(RouterTestBase):
+
+    @classmethod
+    def setUpClass(cls):
+        super(RouterTest3, cls).setUpClass()
+        cls.skip = { 'test_38' : 0,
+                     'test_39' : 0,
+                     'test_40' : 0,
+                     'test_41' : 0,
+                     'test_42' : 0,
+                     'test_43':  0,
+                     'test_44':  0,
+                     'test_45':  0,
+                     'test_46':  0,
+                     'test_47':  0,
+                     'test_48':  0,
+                     'test_49':  0,
+                     'test_50':  0,
+                     'test_51':  0,
+                     'test_52':  0,
+                     'test_53':  0,
+                     'test_54':  0,
+                     'test_55':  0,
+                     'test_56':  0,
+                     'test_57':  0,
+                     'test_58':  0,
+                     'test_59':  0,
+                     'test_60':  0,
+                     'test_61':  0,
+                     'test_62':  0,
+                     'test_63':  0,
+                     'test_64':  0,
+                     'test_65':  0,
+                     'test_66':  0,
+                     'test_67':  0
+                   }
 
     def test_38_mobile_addr_event_three_receivers_same_interior(self):
         if self.skip [ 'test_38' ] :
@@ -1812,7 +1834,7 @@ class ConnectivityTest(MessagingHandler):
         self.edge_conn.close()
 
     def on_start(self, event):
-        self.timer          = event.reactor.schedule(10.0, Timeout(self))
+        self.timer          = event.reactor.schedule(TIMEOUT, Timeout(self))
         self.interior_conn  = event.container.connect(self.interior_host)
         self.edge_conn      = event.container.connect(self.edge_host)
         self.reply_receiver = event.container.create_receiver(self.interior_conn, dynamic=True)
@@ -1868,7 +1890,7 @@ class DynamicAddressTest(MessagingHandler):
         self.sender_conn.close()
 
     def on_start(self, event):
-        self.timer         = event.reactor.schedule(5.0, Timeout(self))
+        self.timer         = event.reactor.schedule(TIMEOUT, Timeout(self))
         self.receiver_conn = event.container.connect(self.receiver_host)
         self.sender_conn   = event.container.connect(self.sender_host)
         self.receiver      = event.container.create_receiver(self.receiver_conn, dynamic=True)
@@ -1969,7 +1991,7 @@ class MobileAddressAnonymousTest(MessagingHandler):
 
 
     def on_start(self, event):
-        self.timer = event.reactor.schedule(15.0 if self.large_msg else 5.0, Timeout(self))
+        self.timer = event.reactor.schedule(TIMEOUT, Timeout(self))
         self.receiver_conn = event.container.connect(self.receiver_host)
         self.sender_conn   = event.container.connect(self.sender_host)
         self.receiver      = event.container.create_receiver(self.receiver_conn, self.address)
@@ -2226,7 +2248,7 @@ class MobileAddressOneSenderTwoReceiversTest(MessagingHandler):
         self.sender_conn.close()
 
     def on_start(self, event):
-        self.timer = event.reactor.schedule(5.0, Timeout(self))
+        self.timer = event.reactor.schedule(TIMEOUT, Timeout(self))
 
         # Create two receivers
         self.receiver1_conn = event.container.connect(self.receiver1_host)
@@ -2331,7 +2353,6 @@ class MobileAddressMulticastTest(MessagingHandler):
         # address  has propagated.
         self.max_attempts = 5
         self.num_attempts = 0
-        self.num_attempts = 0
         self.container = None
         self.check_addr_host = check_addr_host
         if not self.check_addr_host:
@@ -2367,11 +2388,14 @@ class MobileAddressMulticastTest(MessagingHandler):
 
     def check_address(self):
         local_node = Node.connect(self.check_addr_host, timeout=TIMEOUT)
-        outs = local_node.query(type='org.apache.qpid.dispatch.router.address')
+        outs = local_node.query(type='org.apache.qpid.dispatch.router.address',
+                                attribute_names=['key',
+                                                 'subscriberCount',
+                                                 'remoteCount'])
         found = False
         self.num_attempts += 1
-        for result in outs.results:
-            if self.address in result[0]:
+        for result in outs.iter_dicts():
+            if self.address in result['key'] and (result['subscriberCount'] + result['remoteCount']):
                 found = True
                 self.create_sndr()
                 local_node.close()
@@ -2386,11 +2410,10 @@ class MobileAddressMulticastTest(MessagingHandler):
                 self.error = "Unable to create sender because of " \
                              "absence of address in the address table"
                 self.timeout()
-                local_node.close()
+            local_node.close()
 
     def on_start(self, event):
-        self.timer = event.reactor.schedule(20.0 if self.large_msg else 10.0,
-                                            Timeout(self))
+        self.timer = event.reactor.schedule(TIMEOUT, Timeout(self))
         # Create two receivers
         self.receiver1_conn = event.container.connect(self.receiver1_host)
         self.receiver2_conn = event.container.connect(self.receiver2_host)
@@ -2623,7 +2646,7 @@ class MobileAddressEventTest(MessagingHandler):
             self.timeout()
 
     def on_start(self, event):
-        self.timer = event.reactor.schedule(10.0, Timeout(self))
+        self.timer = event.reactor.schedule(TIMEOUT, Timeout(self))
 
         # Create two receivers
         self.receiver1_conn = event.container.connect(self.receiver1_host)

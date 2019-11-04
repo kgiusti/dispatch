@@ -981,15 +981,18 @@ void qd_message_free(qd_message_t *in_msg)
         //
         // it is possible that we've freed enough buffers to clear Q2 holdoff
         //
+        bool restart = false;
         if (content->q2_input_holdoff
             && was_blocked
             && qd_message_Q2_holdoff_should_unblock(in_msg)) {
 
             content->q2_input_holdoff = false;
-            qd_link_restart_rx(qd_message_get_receiving_link(in_msg));
+            restart = true;
         }
-
         UNLOCK(content->lock);
+
+        if (restart)
+            qd_link_restart_rx(qd_message_get_receiving_link(in_msg));
     }
 
     rc = sys_atomic_dec(&content->ref_count) - 1;

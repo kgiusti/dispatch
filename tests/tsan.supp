@@ -1,5 +1,14 @@
 # ThreadSanitizer (tsan) suppression file
 #
+# prefix description:
+# race:  suppresses data races and use-after-free reports
+# thread: suppresses reports related to threads (leaks)
+# mutex: suppresses reports related to mutexes (destruction of a locked mutex)
+# signal: suppresses reports related to signal handlers (handler calls malloc())
+# deadlock: suppresses lock inversion reports
+# called_from_lib: suppresses all interceptors in a particular library
+
+
 race:libqpid-proton-proactor
 deadlock:libpython
 
@@ -45,6 +54,33 @@ race:qd_message_receive_complete
 
 mutex:qdr_forward_on_message
 
+# system_tests_core_client (Travis)
+# Access to qd_log data w/o holding log mutex:
+race:qdr_forward_on_message
+
 mutex:qd_policy_amqp_open
 mutex:qd_policy_amqp_open_connector
+
+# qd_connection_free(): read of qd_connection_t->connector UNLOCKED
+# qd_connector_decref(): write of qd_connector_t->ctx->connector LOCKED
+race:qd_connection_free
+
+# Occasionally hit in system_tests_policy:
+# WARNING: ThreadSanitizer: unlock of an unlocked mutex (or by a wrong thread) (pid=3367)
+#     #0 AnnotateRWLockReleased ../../../../libsanitizer/tsan/tsan_interface_ann.cc:278 (libtsan.so.0+0x65383)
+#     #1 PyEval_SaveThread <null> (libpython3.7m.so.1.0+0x103b45)
+#     #2 qdr_do_link_lost /home/kgiusti/work/dispatch/qpid-dispatch/src/router_core/route_tables.c:783 (libqpid-dispatch.so+0x888c6)
+#     #3 qdr_general_handler /home/kgiusti/work/dispatch/qpid-dispatch/src/router_core/router_core.c:779 (libqpid-dispatch.so+0x83337)
+#     #4 qd_timer_visit /home/kgiusti/work/dispatch/qpid-dispatch/src/timer.c:201 (libqpid-dispatch.so+0xa9206)
+#     #5 handle /home/kgiusti/work/dispatch/qpid-dispatch/src/server.c:917 (libqpid-dispatch.so+0xa57ce)
+#     #6 thread_run /home/kgiusti/work/dispatch/qpid-dispatch/src/server.c:1020 (libqpid-dispatch.so+0xa714b)
+#
+# Mutex M14 (0x7f283b1fd040) created at:
+#     #0 AnnotateRWLockCreate ../../../../libsanitizer/tsan/tsan_interface_ann.cc:253 (libtsan.so.0+0x6514a)
+#     #1 <null> <null> (libpython3.7m.so.1.0+0x1e6cc2)
+#     #2 qd_dispatch /home/kgiusti/work/dispatch/qpid-dispatch/src/dispatch.c:98 (libqpid-dispatch.so+0x41ad8)
+#     #3 main_process /home/kgiusti/work/dispatch/qpid-dispatch/router/src/main.c:90 (qdrouterd+0x402799)
+#     #4 main /home/kgiusti/work/dispatch/qpid-dispatch/router/src/main.c:367 (qdrouterd+0x4024f5)
+#
+mutex:qdr_do_link_lost
 
