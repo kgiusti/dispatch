@@ -520,7 +520,8 @@ qdr_link_t *qdr_link_first_attach(qdr_connection_t *conn,
                                   qdr_terminus_t   *source,
                                   qdr_terminus_t   *target,
                                   const char       *name,
-                                  const char       *terminus_addr)
+                                  const char       *terminus_addr,
+                                  uint64_t         *link_id)
 {
     qdr_action_t   *action         = qdr_action(qdr_link_inbound_first_attach_CT, "link_first_attach");
     qdr_link_t     *link           = new_qdr_link_t();
@@ -529,6 +530,7 @@ qdr_link_t *qdr_link_first_attach(qdr_connection_t *conn,
     ZERO(link);
     link->core = conn->core;
     link->identity = qdr_identifier(conn->core);
+    *link_id = link->identity;
     link->conn = conn;
     link->name = (char*) malloc(strlen(name) + 1);
 
