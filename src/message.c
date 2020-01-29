@@ -2237,3 +2237,16 @@ void qd_message_set_aborted(const qd_message_t *msg, bool aborted)
     qd_message_pvt_t * msg_pvt = (qd_message_pvt_t *)msg;
     msg_pvt->content->aborted = aborted;
 }
+
+bool qd_message_is_streaming(const qd_message_t *msg)
+{
+    const qd_message_pvt_t *msg_pvt = (const qd_message_pvt_t *)msg;
+    return (msg_pvt && msg_pvt->content->streaming);
+}
+
+void qd_message_set_streaming(qd_message_t *msg)
+{
+    const qd_message_pvt_t *msg_pvt = (const qd_message_pvt_t *)msg;
+    if (msg_pvt)
+        msg_pvt->content->streaming = true;
+}

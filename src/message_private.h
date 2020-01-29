@@ -120,6 +120,7 @@ typedef struct {
     bool                 disable_q2_holdoff;             // Disable the Q2 flow control
     bool                 priority_parsed;
     bool                 priority_present;
+    bool                 streaming;                      // message classified as streaming
     uint8_t              priority;                       // The priority of this message
 } qd_message_content_t;
 

@@ -464,13 +464,14 @@ static bool AMQP_rx_handler(void* context, qd_link_t *link)
     //
     if (!receive_complete) {
         if (qd_message_is_Q2_blocked(msg)) {
+            qd_message_set_streaming(msg);
             qd_log(router->log_source, QD_LOG_DEBUG,
                    "[C%"PRIu64" L%"PRIu64"] Incoming message classified as streaming. User:%s",
                    conn->connection_id,
                    qd_link_link_id(link),
                    conn->user_id);
         } else {
-            // Continue buffering - do NOT process the next delivery
+            // Continue buffering this message
             return false;
         }
     }

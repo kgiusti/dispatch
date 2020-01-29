@@ -91,6 +91,7 @@ typedef enum {
     QD_SSN_ROUTER_DATA_PRI_9,
     QD_SSN_CORE_ENDPOINT,     ///< core subscriptions
     QD_SSN_LINK_ROUTE,        ///< link routes
+    QD_SSN_LINK_STREAMING,    ///< link dedicated to streaming messages
     QD_SSN_CLASS_COUNT
 } qd_session_class_t;
 

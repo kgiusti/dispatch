@@ -105,6 +105,7 @@ qdr_connection_t *qdr_connection_opened(qdr_core_t            *core,
     conn->oper_status           = QDR_CONN_OPER_UP;
     DEQ_INIT(conn->links);
     DEQ_INIT(conn->work_list);
+    DEQ_INIT(conn->free_links);
     conn->connection_info->role = conn->role;
     conn->work_lock = sys_mutex();
     conn->conn_uptime = core->uptime_ticks;
@@ -955,8 +956,10 @@ static void qdr_link_cleanup_CT(qdr_core_t *core, qdr_connection_t *conn, qdr_li
     if (qd_bitmask_valid_bit_value(conn->mask_bit)) {
         if (link->link_type == QD_LINK_CONTROL)
             core->control_links_by_mask_bit[conn->mask_bit] = 0;
-        if (link->link_type == QD_LINK_ROUTER)
-            core->data_links_by_mask_bit[conn->mask_bit].links[link->priority] = 0;
+        if (link->link_type == QD_LINK_ROUTER) {
+            if (link == core->data_links_by_mask_bit[conn->mask_bit].links[link->priority])
+                core->data_links_by_mask_bit[conn->mask_bit].links[link->priority] = 0;
+        }
     }
 
     //
@@ -991,6 +994,9 @@ static void qdr_link_cleanup_CT(qdr_core_t *core, qdr_connection_t *conn, qdr_li
     sys_mutex_lock(conn->work_lock);
     qdr_del_link_ref(&conn->links, link, QDR_LINK_LIST_CLASS_CONNECTION);
     qdr_del_link_ref(&conn->links_with_work[link->priority], link, QDR_LINK_LIST_CLASS_WORK);
+    if (link->in_free_pool) {
+        DEQ_REMOVE_N(FREE_POOL, conn->free_links, link);
+    }
     sys_mutex_unlock(conn->work_lock);
 
     if (link->ref[QDR_LINK_LIST_CLASS_ADDRESS]) {
@@ -1305,9 +1311,11 @@ static void qdr_connection_opened_CT(qdr_core_t *core, qdr_action_t *action, boo
                 // Assign a unique mask-bit to this connection as a reference to be used by
                 // the router module
                 //
-                if (qd_bitmask_first_set(core->neighbor_free_mask, &conn->mask_bit))
+                if (qd_bitmask_first_set(core->neighbor_free_mask, &conn->mask_bit)) {
                     qd_bitmask_clear_bit(core->neighbor_free_mask, conn->mask_bit);
-                else {
+                    assert(core->rnode_conns_by_mask_bit[conn->mask_bit] == 0);
+                    core->rnode_conns_by_mask_bit[conn->mask_bit] = conn;
+                } else {
                     qd_log(core->log, QD_LOG_CRITICAL, "Exceeded maximum inter-router connection count");
                     conn->role = QDR_ROLE_NORMAL;
                     break;
@@ -1381,8 +1389,10 @@ static void qdr_connection_closed_CT(qdr_core_t *core, qdr_action_t *action, boo
     // Give back the router mask-bit.
     //
     if (conn->role == QDR_ROLE_INTER_ROUTER) {
+        assert(qd_bitmask_valid_bit_value(conn->mask_bit));
         qdr_reset_sheaf(core, conn->mask_bit);
         qd_bitmask_set_bit(core->neighbor_free_mask, conn->mask_bit);
+        core->rnode_conns_by_mask_bit[conn->mask_bit] = 0;
     }
 
     //
@@ -1472,27 +1482,27 @@ static void qdr_detach_link_control_CT(qdr_core_t *core, qdr_connection_t *conn,
 static void qdr_attach_link_data_CT(qdr_core_t *core, qdr_connection_t *conn, qdr_link_t *link)
 {
     if (conn->role == QDR_ROLE_INTER_ROUTER) {
-        // As inter-router links are attached to this connection, they
-        // are assigned priorities in the order in which they are attached.
-        int next_slot = core->data_links_by_mask_bit[conn->mask_bit].count ++;
-        if (next_slot > QDR_MAX_PRIORITY) {
-            // If somebody tries to exceed max links, log an error and
-            // do not allow replacement of the legitimate link that is already in the max slot.
-            // This is not serious enough to cause a program exit, but if it ever
-            // happens it should be investiagted as a bug.
-            qd_log(core->log, QD_LOG_ERROR, "Attempt to attach too many inter-router links for priority sheaf.");
-            return;
+        // When the inter-router connection is first established the connecting
+        // router opens QDR_N_PRIORITIES links for receiving priority messages.
+        // Add these to the list of priority links used to send messages to
+        // that router. Further links may be opened on demand for streaming
+        // messages but these are not stored in the priority sheaf
+        int next_slot = core->data_links_by_mask_bit[conn->mask_bit].count;
+        if (next_slot < QDR_N_PRIORITIES) {
+            link->priority = next_slot;
+            core->data_links_by_mask_bit[conn->mask_bit].links[next_slot] = link;
+            core->data_links_by_mask_bit[conn->mask_bit].count += 1;
         }
-        link->priority = next_slot;
-        core->data_links_by_mask_bit[conn->mask_bit].links[next_slot] = link;
     }
 }
 
 
 static void qdr_detach_link_data_CT(qdr_core_t *core, qdr_connection_t *conn, qdr_link_t *link)
 {
+    // if this link is in the priority sheaf it needs to be removed
     if (conn->role == QDR_ROLE_INTER_ROUTER)
-        core->data_links_by_mask_bit[conn->mask_bit].links[link->priority] = 0;
+        if (link == core->data_links_by_mask_bit[conn->mask_bit].links[link->priority])
+            core->data_links_by_mask_bit[conn->mask_bit].links[link->priority] = 0;
 }
 
 

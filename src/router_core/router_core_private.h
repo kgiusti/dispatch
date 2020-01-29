@@ -348,7 +348,7 @@ struct qdr_node_t {
     qdr_address_t    *owning_addr;
     int               mask_bit;
     qdr_node_t       *next_hop;           ///< Next hop node _if_ this is not a neighbor node
-    int               link_mask_bit;      ///< Mask bit of inter-router connection if this is a neighbor node
+    int               conn_mask_bit;      ///< qdr_connection_t->mask_bit inter-router conn if this is a neighbor node
     uint32_t          ref_count;
     qd_bitmask_t     *valid_origins;
     int               cost;
@@ -359,11 +359,6 @@ struct qdr_node_t {
 
 DEQ_DECLARE(qdr_node_t, qdr_node_list_t);
 void qdr_router_node_free(qdr_core_t *core, qdr_node_t *rnode);
-
-#define PEER_CONTROL_LINK(c,n) ((n->link_mask_bit >= 0) ? (c)->control_links_by_mask_bit[n->link_mask_bit] : 0)
-// PEER_DATA_LINK has gotten more complex with prioritized links, and is now a function, peer_data_link().
-
-
 
 struct qdr_router_ref_t {
     DEQ_LINKS(qdr_router_ref_t);
@@ -485,8 +480,12 @@ struct qdr_link_t {
     uint8_t   priority;
     uint8_t   rate_cursor;
     uint32_t  core_ticks;
-};
 
+
+    bool                   pooled;            ///< True if this link can be reused for inter-router streaming msgs
+    bool                   in_free_pool;      ///< True if this link is in the connections standby pool FREE_POOL
+    DEQ_LINKS_N(FREE_POOL, qdr_link_t);       /// must hold qdr_connection_t->work_lock
+};
 DEQ_DECLARE(qdr_link_t, qdr_link_list_t);
 
 struct qdr_link_ref_t {
@@ -552,7 +551,7 @@ struct qdr_address_t {
     int           next_remote;
 
     //
-    // State for "balanced" treatment
+    // State for "balanced" treatment, indexed by inter-router connection mask bit
     //
     int *outstanding_deliveries;
 
@@ -669,7 +668,7 @@ struct qdr_connection_t {
     bool                        policy_allow_dynamic_link_routes;
     bool                        policy_allow_admin_status_update;
     int                         link_capacity;
-    int                         mask_bit;
+    int                         mask_bit;  ///< set only if inter-router connection
     qdr_connection_work_list_t  work_list;
     sys_mutex_t                *work_lock;
     qdr_link_ref_list_t         links;
@@ -686,6 +685,8 @@ struct qdr_connection_t {
     uint32_t                    conn_uptime; // Timestamp which can be used to calculate the number of seconds this connection has been up and running.
     uint32_t                    last_delivery_time; // Timestamp which can be used to calculate the number of seconds since the last delivery arrived on this connection.
     bool                        enable_protocol_trace; // Has trace level logging been turned on for this connection.
+    unsigned                    streaming_links:1;  ///< True: connection supports creating links for streaming messages
+    qdr_link_list_t             free_links;      ///< for inter-router conns only: pool of standby links - must hold work_lock!
 };
 
 DEQ_DECLARE(qdr_connection_t, qdr_connection_list_t);
@@ -860,10 +861,11 @@ struct qdr_core_t {
     qdr_address_t             *routerma_addr_T;
 
     qdr_node_list_t       routers;            ///< List of routers, in order of cost, from lowest to highest
-    qd_bitmask_t         *neighbor_free_mask;
-    qdr_node_t          **routers_by_mask_bit;
-    qdr_link_t          **control_links_by_mask_bit;
-    qdr_priority_sheaf_t *data_links_by_mask_bit;
+    qd_bitmask_t         *neighbor_free_mask;        ///< bits available for new conns (qd_connection_t->mask_bit values)
+    qdr_node_t          **routers_by_mask_bit;       ///< indexed by qdr_node_t->mask_bit
+    qdr_connection_t    **rnode_conns_by_mask_bit;   ///< inter-router conns indexed by conn->mask_bit
+    qdr_link_t          **control_links_by_mask_bit; ///< indexed by qdr_node_t->link_mask_bit, qdr_connection_t->mask_bit
+    qdr_priority_sheaf_t *data_links_by_mask_bit;    ///< indexed by qdr_node_t->link_mask_bit, qdr_connection_t->mask_bit
     uint64_t              cost_epoch;
 
     uint64_t              next_tag;
@@ -975,6 +977,8 @@ qdr_link_t *qdr_create_link_CT(qdr_core_t        *core,
 
 void qdr_link_outbound_detach_CT(qdr_core_t *core, qdr_link_t *link, qdr_error_t *error, qdr_condition_t condition, bool close);
 void qdr_link_outbound_second_attach_CT(qdr_core_t *core, qdr_link_t *link, qdr_terminus_t *source, qdr_terminus_t *target);
+qdr_terminus_t *qdr_terminus_router_control(void);  ///< new terminus for router control links
+qdr_terminus_t *qdr_terminus_router_data(void);  ///< new terminus for router links
 
 qdr_query_t *qdr_query(qdr_core_t              *core,
                        void                    *context,
