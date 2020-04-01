@@ -432,6 +432,8 @@ static void qdr_delete_delivery_internal_CT(qdr_core_t *core, qdr_delivery_t *de
 {
     assert(sys_atomic_get(&delivery->ref_count) == 0);
 
+    qdr_link_t *link = qdr_delivery_link(delivery);
+
     if (delivery->msg || delivery->to_addr) {
         qdr_delivery_cleanup_t *cleanup = new_qdr_delivery_cleanup_t();
 
@@ -477,6 +479,23 @@ static void qdr_delete_delivery_internal_CT(qdr_core_t *core, qdr_delivery_t *de
     qdr_delivery_free_extension_state(delivery);
 
     free_qdr_delivery_t(delivery);
+
+    //
+    // If this delivery was owned by a streaming link return the link to the free pool.
+    //
+    if (link && link->streaming) {
+        assert(link->in_streaming_pool == false);
+        DEQ_INSERT_TAIL_N(STREAMING_POOL, link->conn->streaming_link_pool, link);
+        link->in_streaming_pool = true;
+
+        // note that streaming links are designed to transfer only one delivery
+        // at a time, so the release of this delivery indicates the link is
+        // available for re-use.  Verify this is the case.
+        assert(DEQ_SIZE(link->undelivered) == 0 &&
+               DEQ_SIZE(link->unsettled) == 0 &&
+               DEQ_SIZE(link->settled) == 0 &&
+               DEQ_SIZE(link->updated_deliveries) == 0);
+    }
 }
 
 

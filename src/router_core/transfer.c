@@ -34,18 +34,6 @@ static void qdr_link_flow_CT(qdr_core_t *core, qdr_action_t *action, bool discar
 static void qdr_send_to_CT(qdr_core_t *core, qdr_action_t *action, bool discard);
 
 
-// A link is defined as idle if it no longer references any deliveries
-// NOTE: caller MUST hold link->conn->work_lock!
-static inline bool _link_is_idle_LH(const qdr_link_t *link)
-{
-    return DEQ_IS_EMPTY(link->undelivered)
-        && DEQ_IS_EMPTY(link->unsettled)
-        && DEQ_IS_EMPTY(link->settled)
-        && DEQ_IS_EMPTY(link->updated_deliveries)
-        && DEQ_IS_EMPTY(link->work_list);
-}
-
-
 //==================================================================================
 // Interface Functions
 //==================================================================================
@@ -206,12 +194,6 @@ int qdr_link_process_deliveries(qdr_core_t *core, qdr_link_t *link, int credit)
                         qd_log(core->log, QD_LOG_DEBUG, "Delivery transfer:  dlv:%lx qdr_link_process_deliveries: undelivered-list -> unsettled-list", (long) dlv);
                     }
 
-                    // for pooled links now is the time to check if it can be returned to the pool
-                    if (link->pooled && _link_is_idle_LH(link)) {
-                        DEQ_INSERT_TAIL_N(FREE_POOL, conn->free_links, link);
-                        link->in_free_pool = true;
-                        // TODO(kgiusti): release these when available memory gets low (background task?)
-                    }
                 }
                 else {
                     qdr_delivery_decref(core, dlv, "qdr_link_process_deliveries - release local reference - not send_complete");

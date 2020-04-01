@@ -85,10 +85,10 @@ static inline qdr_link_t *get_outgoing_streaming_link(qdr_core_t *core, qdr_conn
     qdr_link_t *out_link = 0;
     sys_mutex_lock(conn->work_lock);
     {
-        out_link = DEQ_HEAD(conn->free_links);
+        out_link = DEQ_HEAD(conn->streaming_link_pool);
         if (out_link) {
-            DEQ_REMOVE_HEAD(conn->free_links);
-            out_link->in_free_pool = false;
+            DEQ_REMOVE_HEAD_N(STREAMING_POOL, conn->streaming_link_pool);
+            out_link->in_streaming_pool = false;
         }
     }
     sys_mutex_unlock(conn->work_lock);
@@ -117,7 +117,7 @@ static inline qdr_link_t *get_outgoing_streaming_link(qdr_core_t *core, qdr_conn
         }
     }
 
-    out_link->pooled = true;
+    out_link->streaming = true;
     return out_link;
 }
 

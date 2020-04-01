@@ -105,7 +105,7 @@ qdr_connection_t *qdr_connection_opened(qdr_core_t            *core,
     conn->oper_status           = QDR_CONN_OPER_UP;
     DEQ_INIT(conn->links);
     DEQ_INIT(conn->work_list);
-    DEQ_INIT(conn->free_links);
+    DEQ_INIT(conn->streaming_link_pool);
     conn->connection_info->role = conn->role;
     conn->work_lock = sys_mutex();
     conn->conn_uptime = core->uptime_ticks;
@@ -930,9 +930,15 @@ static void qdr_link_abort_undelivered_CT(qdr_core_t *core, qdr_link_t *link)
 static void qdr_link_cleanup_CT(qdr_core_t *core, qdr_connection_t *conn, qdr_link_t *link, const char *log_text)
 {
     //
-    // Remove the link from the master list of links
+    // Remove the link from the master list of links and possibly the streaming
+    // link pool
     //
     DEQ_REMOVE(core->open_links, link);
+
+    if (link->in_streaming_pool) {
+        DEQ_REMOVE_N(STREAMING_POOL, conn->streaming_link_pool, link);
+        link->in_streaming_pool = false;
+    }
 
     //
     // If the link has a core_endpoint, allow the core_endpoint module to
@@ -994,9 +1000,6 @@ static void qdr_link_cleanup_CT(qdr_core_t *core, qdr_connection_t *conn, qdr_li
     sys_mutex_lock(conn->work_lock);
     qdr_del_link_ref(&conn->links, link, QDR_LINK_LIST_CLASS_CONNECTION);
     qdr_del_link_ref(&conn->links_with_work[link->priority], link, QDR_LINK_LIST_CLASS_WORK);
-    if (link->in_free_pool) {
-        DEQ_REMOVE_N(FREE_POOL, conn->free_links, link);
-    }
     sys_mutex_unlock(conn->work_lock);
 
     if (link->ref[QDR_LINK_LIST_CLASS_ADDRESS]) {
@@ -1128,6 +1131,19 @@ qdr_link_t *qdr_create_link_CT(qdr_core_t        *core,
 
 void qdr_link_outbound_detach_CT(qdr_core_t *core, qdr_link_t *link, qdr_error_t *error, qdr_condition_t condition, bool close)
 {
+    //
+    // Ensure a pooled link is no longer available for streaming messages
+    //
+    if (link->streaming) {
+        if (link->in_streaming_pool) {
+            DEQ_REMOVE_N(STREAMING_POOL, link->conn->streaming_link_pool, link);
+            link->in_streaming_pool = false;
+        }
+    }
+
+    //
+    // tell the I/O thread to do the detach
+    //
     qdr_link_work_t *work = new_qdr_link_work_t();
     ZERO(work);
     work->work_type  = ++link->detach_count == 1 ? QDR_LINK_WORK_FIRST_DETACH : QDR_LINK_WORK_SECOND_DETACH;
@@ -1813,6 +1829,17 @@ static void qdr_link_inbound_detach_CT(qdr_core_t *core, qdr_action_t *action, b
         return;
 
     } else {
+
+        //
+        // ensure a pooled link is no longer available for use
+        //
+        if (link->streaming) {
+            if (link->in_streaming_pool) {
+                DEQ_REMOVE_N(STREAMING_POOL, conn->streaming_link_pool, link);
+                link->in_streaming_pool = false;
+            }
+        }
+
         //
         // For routed links, propagate the detach
         //

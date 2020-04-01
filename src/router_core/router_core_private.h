@@ -461,9 +461,11 @@ struct qdr_link_t {
     bool                     processing;        ///< True if an IO thread is currently handling this link
     bool                     ready_to_free;     ///< True if the core thread wanted to clean up the link but it was processing
     bool                     fallback;          ///< True if this link is attached to a fallback destination for an address
+    bool                     streaming;         ///< True if this link can be reused for streaming msgs
+    bool                     in_streaming_pool; ///< True if this link is in the connections standby pool STREAMING_POOL
+    bool                     terminus_survives_disconnect;
     char                    *strip_prefix;
     char                    *insert_prefix;
-    bool                     terminus_survives_disconnect;
 
     uint64_t  total_deliveries;
     uint64_t  presettled_deliveries;
@@ -481,10 +483,7 @@ struct qdr_link_t {
     uint8_t   rate_cursor;
     uint32_t  core_ticks;
 
-
-    bool                   pooled;            ///< True if this link can be reused for inter-router streaming msgs
-    bool                   in_free_pool;      ///< True if this link is in the connections standby pool FREE_POOL
-    DEQ_LINKS_N(FREE_POOL, qdr_link_t);       /// must hold qdr_connection_t->work_lock
+    DEQ_LINKS_N(STREAMING_POOL, qdr_link_t);
 };
 DEQ_DECLARE(qdr_link_t, qdr_link_list_t);
 
@@ -685,8 +684,7 @@ struct qdr_connection_t {
     uint32_t                    conn_uptime; // Timestamp which can be used to calculate the number of seconds this connection has been up and running.
     uint32_t                    last_delivery_time; // Timestamp which can be used to calculate the number of seconds since the last delivery arrived on this connection.
     bool                        enable_protocol_trace; // Has trace level logging been turned on for this connection.
-    unsigned                    streaming_links:1;  ///< True: connection supports creating links for streaming messages
-    qdr_link_list_t             free_links;      ///< for inter-router conns only: pool of standby links - must hold work_lock!
+    qdr_link_list_t             streaming_link_pool;   ///< pool of available links for streaming messages
 };
 
 DEQ_DECLARE(qdr_connection_t, qdr_connection_list_t);
