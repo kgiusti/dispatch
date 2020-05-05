@@ -84,7 +84,7 @@ bool qd_parse_tree_get_pattern(qd_parse_tree_t *tree,
 //   given the following AMQP 0-10 topic patterns:
 //   1) 'a.b.c'
 //   2) 'a.b.*'
-//   3)'a.b.#'
+//   3) 'a.b.#'
 //
 //  'a.b.c' will match 1
 //  'a.b.x' will match 2

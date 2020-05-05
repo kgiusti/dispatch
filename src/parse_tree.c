@@ -19,6 +19,7 @@
 
 
 #include "parse_tree.h"
+#include <qpid/dispatch/hash.h>
 #include <qpid/dispatch/log.h>
 
 
@@ -112,9 +113,9 @@ static void token_iterator_pop(token_iterator_t *t, token_t *head)
 }
 
 
-static bool token_match_str(const token_t *t, const char *str)
+static inline bool token_match_str(const token_t *t, size_t t_len, const char *str, size_t s_len)
 {
-    return (TOKEN_LEN(*t) == strlen(str) && !strncmp(t->begin, str, TOKEN_LEN(*t)));
+    return (t_len == s_len && !memcmp(t->begin, str, t_len));
 }
 
 // True if current token is the match one wildcard
@@ -212,9 +213,15 @@ struct qd_parse_node {
     bool is_match_1;            // this node is match one wildcard
     bool is_match_glob;         // this node is match zero or more wildcard
     char *token;          // portion of pattern represented by this node
+    size_t t_len;
+    qd_iterator_t         *token_iter;
     char *pattern;        // entire normalized pattern matching this node
+    qd_hash_handle_t      *my_handle;
     // sub-trees of this node:
-    qd_parse_node_list_t  children; // all that start with a non-wildcard token
+
+    qd_parse_node_list_t   children_list; // all that start with a non-wildcard token
+    qd_hash_t             *child_hash;
+
     struct qd_parse_node  *match_1_child;   // starts with a match 1 wildcard
     struct qd_parse_node  *match_glob_child;  // starts with 0 or more wildcard
     // data returned on match against this node:
@@ -231,15 +238,18 @@ static qd_parse_node_t *new_parse_node(const token_t *t, qd_parse_tree_type_t ty
     if (n) {
         ZERO(n);
         DEQ_ITEM_INIT(n);
-        DEQ_INIT(n->children);
+        DEQ_INIT(n->children_list);
         n->type = type;
         n->log_source = qd_log_source("DEFAULT");
+        n->child_hash = qd_hash(8, 10, false);
 
         if (t) {  // non-root node
             const size_t tlen = TOKEN_LEN(*t);
             n->token = malloc(tlen + 1);
             strncpy(n->token, t->begin, tlen);
             n->token[tlen] = 0;
+            n->t_len = tlen;
+            n->token_iter = qd_iterator_string(n->token, ITER_VIEW_ALL);
             token_iterator_t tmp;
             token_iterator_init(&tmp, type, n->token);
             n->is_match_1 = token_iterator_is_match_1(&tmp);
@@ -253,7 +263,7 @@ static qd_parse_node_t *new_parse_node(const token_t *t, qd_parse_tree_type_t ty
 // return count of child nodes
 static int parse_node_child_count(const qd_parse_node_t *n)
 {
-    return DEQ_SIZE(n->children)
+    return DEQ_SIZE(n->children_list)
         + (n->match_1_child ? 1 : 0)
         + (n->match_glob_child ? 1 : 0);
 }
@@ -262,6 +272,10 @@ static int parse_node_child_count(const qd_parse_node_t *n)
 static void free_parse_node(qd_parse_node_t *n)
 {
     assert(parse_node_child_count(n) == 0);
+    if (n->token_iter)
+        qd_iterator_free(n->token_iter);
+    if (n->child_hash)
+        qd_hash_free(n->child_hash);
     free(n->token);
     free(n->pattern);
     free_qd_parse_node_t(n);
@@ -271,9 +285,18 @@ static void free_parse_node(qd_parse_node_t *n)
 // find immediate child node matching token
 static qd_parse_node_t *parse_node_find_child(const qd_parse_node_t *node, const token_t *token)
 {
-    qd_parse_node_t *child = DEQ_HEAD(node->children);
-    while (child && !token_match_str(token, child->token))
+    qd_iterator_t *ti = qd_iterator_binary(token->begin, TOKEN_LEN(*token), ITER_VIEW_ALL);
+    qd_parse_node_t *child = 0;
+    qd_hash_retrieve(node->child_hash, ti, (void **)&child);
+    qd_iterator_free(ti);
+
+#if 0
+    size_t t_len = TOKEN_LEN(*token);
+    qd_parse_node_t *child = DEQ_HEAD(node->children_list);
+    while (child && !token_match_str(token, t_len, child->token, child->t_len))
         child = DEQ_NEXT(child);
+#endif
+
     return child;
 }
 
@@ -331,7 +354,9 @@ static void *parse_node_add_pattern(qd_parse_node_t *node,
                                           payload);
         } else {
             child = new_parse_node(&current, node->type);
-            DEQ_INSERT_TAIL(node->children, child);
+
+            qd_hash_insert(node->child_hash, child->token_iter, child, &child->my_handle);
+            DEQ_INSERT_TAIL(node->children_list, child);
             return parse_node_add_pattern(child,
                                           key,
                                           pattern,
@@ -382,7 +407,11 @@ static void *parse_node_remove_pattern(qd_parse_node_t *node,
             old = parse_node_remove_pattern(child, key, pattern);
             if (child->pattern == NULL
                 && parse_node_child_count(child) == 0) {
-                DEQ_REMOVE(node->children, child);
+                DEQ_REMOVE(node->children_list, child);
+
+                qd_hash_remove_by_handle(node->child_hash, child->my_handle);
+                qd_hash_handle_free(child->my_handle);
+
                 free_parse_node(child);
             }
         }
@@ -442,7 +471,7 @@ static bool parse_node_find_children(qd_parse_node_t *node, token_iterator_t *va
     if (!token_iterator_done(value)) {
 
         // check exact match first (precedence)
-        if (DEQ_SIZE(node->children) > 0) {
+        if (DEQ_SIZE(node->children_list) > 0) {
             token_iterator_t tmp = *value;
             token_t child_token;
             token_iterator_pop(&tmp, &child_token);
@@ -552,9 +581,13 @@ static void parse_node_free(qd_parse_node_t *node)
         if (node->match_1_child) parse_node_free(node->match_1_child);
         if (node->match_glob_child) parse_node_free(node->match_glob_child);
         node->match_1_child = node->match_glob_child = NULL;
-        while (!DEQ_IS_EMPTY(node->children)) {
-            qd_parse_node_t *child = DEQ_HEAD(node->children);
-            DEQ_REMOVE_HEAD(node->children);
+        while (!DEQ_IS_EMPTY(node->children_list)) {
+            qd_parse_node_t *child = DEQ_HEAD(node->children_list);
+            DEQ_REMOVE_HEAD(node->children_list);
+
+            qd_hash_remove_by_handle(node->child_hash, child->my_handle);
+            qd_hash_handle_free(child->my_handle);
+
             parse_node_free(child);
         }
 
@@ -684,7 +717,7 @@ bool qd_parse_tree_walk(qd_parse_tree_t *node, qd_parse_tree_visit_t *callback, 
             return false;
     }
 
-    qd_parse_node_t *child = DEQ_HEAD(node->children);
+    qd_parse_node_t *child = DEQ_HEAD(node->children_list);
     while (child) {
         if (!qd_parse_tree_walk(child, callback, handle))
             return false;
@@ -719,7 +752,7 @@ bool qd_parse_tree_validate_pattern(const qd_parse_tree_t *tree,
         while (!token_iterator_done(&ti)) {
             token_t head;
             token_iterator_pop(&ti, &head);
-            if (token_match_str(&head, "#")) {
+            if (token_match_str(&head, TOKEN_LEN(head), "#", 1)) {
                 valid = token_iterator_done(&ti);
                 break;
             }
@@ -757,7 +790,7 @@ void qd_parse_tree_dump(qd_parse_node_t *node, int depth)
             parse_node_child_count(node));
     if (node->match_1_child) qd_parse_tree_dump(node->match_1_child, depth + 1);
     if (node->match_glob_child) qd_parse_tree_dump(node->match_glob_child, depth + 1);
-    qd_parse_node_t *child = DEQ_HEAD(node->children);
+    qd_parse_node_t *child = DEQ_HEAD(node->children_list);
     while (child) {
         qd_parse_tree_dump(child, depth + 1);
         child = DEQ_NEXT(child);
