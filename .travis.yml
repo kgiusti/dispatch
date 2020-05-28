@@ -17,17 +17,15 @@
 # under the License
 #
 
-sudo: true
 language: c
 cache: ccache
-matrix:
+jobs:
   fast_finish: true
   allow_failures:
     - os: osx
   include:
   - name: "apache-rat:check"
     os: linux
-    sudo: false
     env: []
     language: java
     addons:
@@ -55,6 +53,10 @@ matrix:
     env:
     - PATH="/usr/bin:$PATH" PROTON_VERSION=0.31.0 BUILD_TYPE=RelWithDebInfo
     - DISPATCH_CMAKE_ARGS='-DRUNTIME_CHECK=asan'
+  - os: linux
+    env:
+    - PATH="/usr/bin:$PATH" PROTON_VERSION=0.31.0 BUILD_TYPE=RelWithDebInfo
+    - DISPATCH_CMAKE_ARGS='-DCMAKE_C_FLAGS=-DQD_MEMORY_DEBUG'
   - os: osx
     osx_image: xcode11
     env:
