@@ -64,6 +64,9 @@ target_link_libraries(test-receiver ${Proton_LIBRARIES})
 add_executable(clogger clogger.c)
 target_link_libraries(clogger ${Proton_LIBRARIES})
 
+add_executable(threaded_timer_test threaded_timer_test.c)
+target_link_libraries(threaded_timer_test qpid-dispatch)
+
 
 set(TEST_WRAP ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/run.py)
 
@@ -76,6 +79,9 @@ add_test(unit_tests_size_3     ${TEST_WRAP} unit_tests_size 3)
 add_test(unit_tests_size_2     ${TEST_WRAP} unit_tests_size 2)
 add_test(unit_tests_size_1     ${TEST_WRAP} unit_tests_size 1)
 add_test(unit_tests            ${TEST_WRAP} unit_tests ${CMAKE_CURRENT_SOURCE_DIR}/threads4.conf)
+
+# stand alone tests
+add_test(threaded_timer_test   ${TEST_WRAP} threaded_timer_test ${CMAKE_CURRENT_SOURCE_DIR}/dummy.conf)
 
 # Unit test python modules
 add_test(router_engine_test    ${TEST_WRAP} ${PYTHON_TEST_COMMAND} -v router_engine_test)
