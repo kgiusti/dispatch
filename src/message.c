@@ -1950,7 +1950,9 @@ static qd_message_depth_status_t qd_message_check_LH(qd_message_content_t *conte
         return QD_MESSAGE_DEPTH_OK; // We've already parsed at least this deep
 
     qd_buffer_t *buffer  = DEQ_HEAD(content->buffers);
+    printf ("content is %p\n", (void *)content);
     if (!buffer) {
+        printf ("qd_message_check_LH 1 receive_complete is %i\n", content->receive_complete);
         return content->receive_complete ? QD_MESSAGE_DEPTH_INVALID : QD_MESSAGE_DEPTH_INCOMPLETE;
     }
 
