@@ -59,7 +59,8 @@ typedef enum {
     CXTR_STATE_INIT = 0,
     CXTR_STATE_CONNECTING,
     CXTR_STATE_OPEN,
-    CXTR_STATE_FAILED
+    CXTR_STATE_FAILED,
+    CXTR_STATE_DELETED  // by management
 } cxtr_state_t;
 
 

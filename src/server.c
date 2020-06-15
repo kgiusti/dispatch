@@ -851,27 +851,34 @@ static void qd_connection_free(qd_connection_t *ctx)
 
     // If this is a dispatch connector, schedule the re-connect timer
     if (ctx->connector) {
-        long delay = ctx->connector->delay;
-        sys_mutex_lock(ctx->connector->lock);
-        ctx->connector->ctx = 0;
-        // Increment the connection index by so that we can try connecting to the failover url (if any).
-        bool has_failover = qd_connector_has_failover_info(ctx->connector);
+        qd_connector_t *ct = ctx->connector;
 
-        if (has_failover) {
-            // Go thru the failover list round robin.
-            // IMPORTANT: Note here that we set the re-try timer to 1 second.
-            // We want to quickly keep cycling thru the failover urls every second.
-            delay = 1000;
+        sys_mutex_lock(ct->lock);
+
+        if (ct->state != CXTR_STATE_DELETED) {
+            long delay = ct->delay;
+
+            // Increment the connection index by so that we can try connecting to the failover url (if any).
+            bool has_failover = qd_connector_has_failover_info(ct);
+
+            if (has_failover) {
+                // Go thru the failover list round robin.
+                // IMPORTANT: Note here that we set the re-try timer to 1 second.
+                // We want to quickly keep cycling thru the failover urls every second.
+                delay = 1000;
+            }
+
+            ct->state = CXTR_STATE_CONNECTING;
+            qd_timer_schedule(ct->timer, delay);
         }
 
-        ctx->connector->state = CXTR_STATE_CONNECTING;
-        sys_mutex_unlock(ctx->connector->lock);
+        ct->ctx = 0;
+        ctx->connector = 0;
 
-        //
-        // Increment the ref-count to account for the timer's reference to the connector.
-        //
-        sys_atomic_inc(&ctx->connector->ref_count);
-        qd_timer_schedule(ctx->connector->timer, delay);
+        sys_mutex_unlock(ct->lock);
+
+        // this conn no longer references the connector.
+        qd_connector_decref(ct);
     }
 
     sys_mutex_lock(qd_server->lock);
@@ -1100,12 +1107,12 @@ static qd_failover_item_t *qd_connector_get_conn_info(qd_connector_t *ct) {
 }
 
 
-/* Timer callback to try/retry connection open */
+/* Timer callback to try/retry connection open.  Note the connector lock is held
+ * throughout this call
+ */
 static void try_open_lh(qd_connector_t *ct)
 {
     if (ct->state != CXTR_STATE_CONNECTING && ct->state != CXTR_STATE_INIT) {
-        /* No longer referenced by pn_connection or timer */
-        qd_connector_decref(ct);
         return;
     }
 
@@ -1114,12 +1121,13 @@ static void try_open_lh(qd_connector_t *ct)
         qd_log(ct->server->log_source, QD_LOG_CRITICAL, "Allocation failure connecting to %s",
                ct->config.host_port);
         ct->delay = 10000;
-        sys_atomic_inc(&ct->ref_count);
         qd_timer_schedule(ct->timer, ct->delay);
         return;
     }
 
     ctx->connector    = ct;
+    sys_atomic_inc(&ct->ref_count);
+
     const qd_server_config_t *config = &ct->config;
 
     //
@@ -1141,7 +1149,7 @@ static void try_open_lh(qd_connector_t *ct)
     if (config->sasl_password)
         pn_connection_set_password(ctx->pn_conn, config->sasl_password);
 
-    ctx->connector->state = CXTR_STATE_OPEN;
+    ct->state = CXTR_STATE_OPEN;
     ct->ctx   = ctx;
     ct->delay = 5000;
 
@@ -1246,13 +1254,12 @@ static void setup_ssl_sasl_and_open(qd_connection_t *ctx)
     pn_connection_open(ctx->pn_conn);
 }
 
-static void try_open_cb(void *context) {
+static void try_open_cb(void *context)
+{
     qd_connector_t *ct = (qd_connector_t*) context;
-    if (!qd_connector_decref(ct)) {
-        sys_mutex_lock(ct->lock);   /* TODO aconway 2017-05-09: this lock looks too big */
-        try_open_lh(ct);
-        sys_mutex_unlock(ct->lock);
-    }
+    sys_mutex_lock(ct->lock);   /* TODO aconway 2017-05-09: this lock looks too big */
+    try_open_lh(ct);
+    sys_mutex_unlock(ct->lock);
 }
 
 
@@ -1306,6 +1313,14 @@ void qd_server_free(qd_server_t *qd_server)
                "[C%"PRIu64"] Closing connection on shutdown",
                ctx->connection_id);
         DEQ_REMOVE_HEAD(qd_server->conn_list);
+        if (ctx->connector) {
+            qd_connector_t *ct = ctx->connector;
+            sys_mutex_lock(ct->lock);
+            ctx->connector = 0;
+            ct->ctx = 0;
+            sys_mutex_unlock(ct->lock);
+            qd_connector_decref(ct);
+        }
         if (ctx->pn_conn) {
             pn_transport_t *tport = pn_connection_transport(ctx->pn_conn);
             if (tport)
@@ -1314,6 +1329,7 @@ void qd_server_free(qd_server_t *qd_server)
             pn_connection_set_context(ctx->pn_conn, 0);
         }
         if (ctx->free_user_id) free((char*)ctx->user_id);
+        invoke_deferred_calls(ctx, true);
         sys_mutex_free(ctx->deferred_call_lock);
         free(ctx->name);
         free(ctx->role);
@@ -1578,14 +1594,26 @@ qd_connector_t *qd_server_connector(qd_server_t *server)
     ct->conn_index = 1;
     ct->state   = CXTR_STATE_INIT;
     ct->lock = sys_mutex();
+    if (!ct->lock)
+        goto error;
     ct->conn_msg = (char*) malloc(300);
+    if (!ct->conn_msg)
+        goto error;
     memset(ct->conn_msg, 0, 300);
     ct->timer = qd_timer(ct->server->qd, try_open_cb, ct);
-    if (!ct->lock || !ct->timer) {
-        qd_connector_decref(ct);
-        return 0;
-    }
+    if (!ct->timer)
+        goto error;
     return ct;
+
+error:
+    if (ct->lock)
+        sys_mutex_free(ct->lock);
+    if (ct->timer)
+        qd_timer_free(ct->timer);
+    if (ct->conn_msg)
+        free(ct->conn_msg);
+    free_qd_connector_t(ct);
+    return 0;
 }
 
 
@@ -1595,14 +1623,16 @@ const char *qd_connector_policy_vhost(qd_connector_t* ct)
 }
 
 
+// called by connection manager
+//
 bool qd_connector_connect(qd_connector_t *ct)
 {
     sys_mutex_lock(ct->lock);
-    ct->ctx     = 0;
-    ct->delay   = 0;
-    /* Referenced by timer */
-    sys_atomic_inc(&ct->ref_count);
-    qd_timer_schedule(ct->timer, ct->delay);
+    if (ct->state == CXTR_STATE_INIT || ct->state == CXTR_STATE_FAILED) {
+        assert(ct->ctx == 0);
+        ct->delay = 0;
+        qd_timer_schedule(ct->timer, ct->delay);
+    }
     sys_mutex_unlock(ct->lock);
     return true;
 }
@@ -1610,13 +1640,19 @@ bool qd_connector_connect(qd_connector_t *ct)
 
 bool qd_connector_decref(qd_connector_t* ct)
 {
-    if (ct && sys_atomic_dec(&ct->ref_count) == 1) {
+    if (ct) {
         sys_mutex_lock(ct->lock);
-        if (ct->ctx) {
-            ct->ctx->connector = 0;
+        if (sys_atomic_dec(&ct->ref_count) > 1) {
+            sys_mutex_unlock(ct->lock);
+            return false;
         }
+        assert(!ct->ctx);
+        assert(ct->state == CXTR_STATE_DELETED);
+
         sys_mutex_unlock(ct->lock);
         qd_server_config_free(&ct->config);
+
+        // may block
         qd_timer_free(ct->timer);
 
         qd_failover_item_t *item = DEQ_HEAD(ct->conn_info_list);

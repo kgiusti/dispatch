@@ -847,6 +847,9 @@ qd_error_t qd_entity_refresh_connector(qd_entity_t* entity, void *impl)
     case CXTR_STATE_INIT:
       state_info = "INITIALIZING";
       break;
+    case CXTR_STATE_DELETED:
+      state_info = "DELETED";
+      break;
     default:
       state_info = "UNKNOWN";
       break;
@@ -921,6 +924,31 @@ qd_connection_manager_t *qd_connection_manager(qd_dispatch_t *qd)
 }
 
 
+static void deferred_close(void *context, bool discard)
+{
+    if (!discard) {
+        pn_connection_close((pn_connection_t*)context);
+    }
+}
+
+
+static void delete_connector(qd_connector_t *ct)
+{
+    assert(ct);
+    sys_mutex_lock(ct->lock);
+
+    ct->state = CXTR_STATE_DELETED;
+    if (ct->ctx && ct->ctx->pn_conn) {
+        qd_connection_invoke_deferred(ct->ctx, deferred_close, ct->ctx->pn_conn);
+    }
+    sys_mutex_unlock(ct->lock);
+
+    // cancel may block if timer executing - call outside of lock
+    qd_timer_cancel(ct->timer);
+    qd_connector_decref(ct);
+}
+
+
 // Called on router shutdown
 //
 void qd_connection_manager_free(qd_connection_manager_t *cm)
@@ -946,7 +974,7 @@ void qd_connection_manager_free(qd_connection_manager_t *cm)
     qd_connector_t *c = DEQ_HEAD(cm->connectors);
     while (c) {
         DEQ_REMOVE_HEAD(cm->connectors);
-        qd_connector_decref(c);
+        delete_connector(c);
         c = DEQ_HEAD(cm->connectors);
     }
 
@@ -987,12 +1015,6 @@ void qd_connection_manager_start(qd_dispatch_t *qd)
     }
 
     while (ct) {
-
-        if (ct->state == CXTR_STATE_OPEN || ct->state == CXTR_STATE_CONNECTING) {
-            ct = DEQ_NEXT(ct);
-            continue;
-        }
-
         qd_connector_connect(ct);
         ct = DEQ_NEXT(ct);
     }
@@ -1030,27 +1052,12 @@ void qd_connection_manager_delete_sasl_plugin(qd_dispatch_t *qd, void *impl)
 }
 
 
-static void deferred_close(void *context, bool discard) {
-    if (!discard) {
-        pn_connection_close((pn_connection_t*)context);
-    }
-}
-
-
 void qd_connection_manager_delete_connector(qd_dispatch_t *qd, void *impl)
 {
     qd_connector_t *ct = (qd_connector_t*) impl;
     if (ct) {
-        sys_mutex_lock(ct->lock);
-        if (ct->ctx) {
-            ct->ctx->connector = 0;
-            if(ct->ctx->pn_conn)
-                qd_connection_invoke_deferred(ct->ctx, deferred_close, ct->ctx->pn_conn);
-
-        }
-        sys_mutex_unlock(ct->lock);
         DEQ_REMOVE(qd->connection_manager->connectors, ct);
-        qd_connector_decref(ct);
+        delete_connector(ct);
     }
 }
 
