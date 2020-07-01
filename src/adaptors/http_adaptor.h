@@ -29,12 +29,12 @@
 // We will call this as qd_http_lsnr_t in order to avoid a clash.
 // At a later point in time, we will handle websocket here as well
 // and get rid of http-libwebsockets.c and rename this as qd_http_listener_t
-typedef struct qd_http_lsnr_t          qd_http_lsnr_t;
-typedef struct qd_http_connector_t     qd_http_connector_t;
-typedef struct qd_http2_session_data_t qd_http2_session_data_t;
-typedef struct qd_bridge_config_t      qd_bridge_config_t;
-typedef struct qd_http2_stream_data_t  qd_http2_stream_data_t;
-typedef struct qdr_http_connection_t  qdr_http_connection_t;
+typedef struct qd_http_lsnr_t           qd_http_lsnr_t;
+typedef struct qd_http_connector_t      qd_http_connector_t;
+typedef struct qdr_http2_session_data_t qdr_http2_session_data_t;
+typedef struct qd_bridge_config_t       qd_bridge_config_t;
+typedef struct qdr_http2_stream_data_t  qdr_http2_stream_data_t;
+typedef struct qdr_http_connection_t    qdr_http_connection_t;
 //typedef struct qd_http2_user_context_t  qd_http2_user_context_t;
 
 struct qd_bridge_config_t {
@@ -64,89 +64,72 @@ struct qd_http_connector_t {
     DEQ_LINKS(qd_http_connector_t);
 };
 
-struct qd_http2_stream_data_t {
-    char *request_path;
-    int32_t stream_id;
+struct qdr_http2_stream_data_t {
+    int32_t                  stream_id;
+    qdr_http2_session_data_t *session_data;
+    char                    *reply_to;
+    qdr_delivery_t          *in_dlv;
+    qdr_delivery_t          *out_dlv;
+    uint64_t                 incoming_id;
+    uint64_t                 outgoing_id;
 
-    //Client data
-    const char *uri; // The NULL-terminated URI string to retrieve.
+    qdr_link_t              *in_link;
+    qdr_link_t              *out_link;
+
+    qd_message_t            *message;
+    qd_composed_field_t     *header_properties;  // This has the header and the properties.
+    qd_composed_field_t     *app_properties;     // This has the application properties.
+    bool                     entire_header_arrived; // true if all the header properties has arrived, just before the start of the data frame or just before the end stream.
+    bool                     header_sent;
+    bool                     has_data;  // Did we ever receive a DATA frame.
+    qd_buffer_list_t         header_buffs;
+
+    DEQ_LINKS(qdr_http2_stream_data_t);
+    //const char *uri; // The NULL-terminated URI string to retrieve.
     /* The authority portion of the |uri|, not NULL-terminated */
-    char *authority;
+    //char *authority;
     /* The path portion of the |uri|, including query, not NULL-terminated */
-    char *path;
+    //char *path;
     /* The length of the |authority| */
-    size_t authoritylen;
+    //size_t authoritylen;
     /* The length of the |path| */
-    size_t pathlen;
-    DEQ_LINKS(qd_http2_stream_data_t);
+    //size_t pathlen;
 };
 
 struct qdr_http_connection_t {
-    qd_handler_context_t  context;
-    char                 *reply_to;
-    qdr_connection_t     *qdr_conn;
-    qdr_link_t           *in_link;
-    qdr_link_t           *out_link;
-    uint64_t              incoming_id;
-    uint64_t              outgoing_id;
-    pn_raw_connection_t  *pn_raw_conn;
-    pn_raw_buffer_t       read_buffers[4];
-    qdr_delivery_t       *in_dlv;
-    qdr_delivery_t       *out_dlv;
-    bool                  ingress;
-    qd_timer_t           *activate_timer;
-    qd_bridge_config_t   *config;
-    qd_server_t          *server;
-    uint64_t              conn_id;
-    qd_http2_session_data_t *session_data;
-    char                 *remote_address;
+    qd_handler_context_t     context;
+    qdr_connection_t        *qdr_conn;
+    pn_raw_connection_t     *pn_raw_conn;
+    pn_raw_buffer_t          read_buffers[4];
+    bool                     ingress;
+    qd_timer_t              *activate_timer;
+    qd_bridge_config_t      *config;
+    qd_server_t             *server;
+    uint64_t                 conn_id;
+    qdr_http2_session_data_t *session_data;
+    char                    *remote_address;
+    qdr_link_t              *stream_dispatcher;
+    uint64_t                 stream_dispatcher_id;
+    bool                     connection_established;
+    bool                     grant_initial_buffers;
+    qdr_http2_stream_data_t *initial_stream;
 };
 
-//struct qd_http2_user_context_t {
-//    qd_message_t *message;
-//};
+DEQ_DECLARE(qdr_http2_stream_data_t, qd_http2_stream_data_list_t);
 
-
+struct qdr_http2_session_data_t {
+    qd_http2_stream_data_list_t  streams;
+    nghttp2_session             *session;
+    qdr_http_connection_t       *conn;
+    qd_buffer_list_t             buffs;
+};
 
 
 DEQ_DECLARE(qd_http_lsnr_t, qd_http_lsnr_list_t);
 ALLOC_DECLARE(qd_http_lsnr_t);
-ALLOC_DECLARE(qd_http2_session_data_t);
+ALLOC_DECLARE(qdr_http2_session_data_t);
 ALLOC_DECLARE(qd_http_connector_t);
-ALLOC_DECLARE(qd_http2_stream_data_t);
+ALLOC_DECLARE(qdr_http2_stream_data_t);
 DEQ_DECLARE(qd_http_connector_t, qd_http_connector_list_t);
-DEQ_DECLARE(qd_http2_stream_data_t, qd_http2_stream_data_list_t);
-
-struct qd_http2_session_data_t {
-    qd_http2_stream_data_list_t  streams;
-    int                          num_headers;
-
-    qd_http2_stream_data_t      *stream_data; // This field is temporary. We will remove it.
-    qd_message_t                *message;
-    nghttp2_session             *session;
-    char                        *client_addr;
-    char                        *path;   // This field is mapped to the 'to' field of AMQP
-    char                        *method; // HTTP method - GET, POST, HEAD etc.
-    char                        *content_type; //content_type.
-    char                        *content_encoding;
-    char                        *status;  // Response status like 200:OK
-    qdr_http_connection_t       *conn;
-    size_t                       request_header_len;
-    size_t                       response_header_len;
-    bool                         has_data;  // Did we ever receive a request or a response DATA frame.
-
-    //Might need to create a request data field and move these there
-    qd_composed_field_t         *header_properties;  // This has the header and the properties.
-    qd_composed_field_t         *app_properties;     // This has the application properties.
-    bool                  header_sent;
-    qd_buffer_list_t            buff_list;
 
 
-
-    // A linked list of buffers that contain data that need to be written outbound
-    qd_buffer_list_t             out_buffs;
-    qd_iterator_pointer_t        cursor;
-    qd_iterator_pointer_t        sent_cursor;
-
-
-};
