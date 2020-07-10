@@ -368,10 +368,6 @@ static qdr_tcp_connection_t *qdr_tcp_connection_ingress(qd_tcp_listener_t* liste
     tc->server = listener->server;
     tc->socket = pn_raw_connection();
     pn_raw_connection_set_context(tc->socket, tc);
-    //the following call will cause a PN_RAW_CONNECTION_CONNECTED
-    //event on another thread, which is where the rest of the
-    //initialisation will happen, through a call to
-    //qdr_tcp_connection_ingress_accept
     pn_listener_raw_accept(listener->pn_listener, tc->socket);
     return tc;
 }

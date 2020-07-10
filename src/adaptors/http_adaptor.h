@@ -60,29 +60,28 @@ struct qd_http_connector_t {
     qd_bridge_config_t        config;
     qd_timer_t               *timer;
     long                      delay;
-
     DEQ_LINKS(qd_http_connector_t);
 };
 
 struct qdr_http2_stream_data_t {
-    int32_t                  stream_id;
+    int32_t                   stream_id;
     qdr_http2_session_data_t *session_data;
-    char                    *reply_to;
-    qdr_delivery_t          *in_dlv;
-    qdr_delivery_t          *out_dlv;
-    uint64_t                 incoming_id;
-    uint64_t                 outgoing_id;
+    char                     *reply_to;
+    qdr_delivery_t           *in_dlv;
+    qdr_delivery_t           *out_dlv;
+    uint64_t                  incoming_id;
+    uint64_t                  outgoing_id;
 
-    qdr_link_t              *in_link;
-    qdr_link_t              *out_link;
+    qdr_link_t               *in_link;
+    qdr_link_t               *out_link;
 
-    qd_message_t            *message;
-    qd_composed_field_t     *header_properties;  // This has the header and the properties.
-    qd_composed_field_t     *app_properties;     // This has the application properties.
+    qd_message_t             *message;
+    qd_composed_field_t      *header_properties;  // This has the header and the properties.
+    qd_composed_field_t      *app_properties;     // This has the application properties.
     bool                     entire_header_arrived; // true if all the header properties has arrived, just before the start of the data frame or just before the end stream.
     bool                     header_sent;
     bool                     has_data;  // Did we ever receive a DATA frame.
-    qd_buffer_list_t         header_buffs;
+
 
     DEQ_LINKS(qdr_http2_stream_data_t);
     //const char *uri; // The NULL-terminated URI string to retrieve.
