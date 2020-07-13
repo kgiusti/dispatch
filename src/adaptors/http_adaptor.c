@@ -1022,10 +1022,13 @@ static int handle_incoming_http(qdr_http_connection_t *conn)
     // Read each buffer in the buffer chain and call nghttp2_session_mem_recv with each buffer content
     //
     qd_buffer_t *buf = DEQ_HEAD(buffers);
+    qd_buffer_t *curr_buf = 0;
     while (buf) {
         nghttp2_session_mem_recv(conn->session_data->session, qd_buffer_base(buf), qd_buffer_size(buf));
-        //TODO - Free buffers here.
-        buf = DEQ_NEXT(buf);
+        curr_buf = buf;
+        DEQ_REMOVE_HEAD(buffers);
+        buf = DEQ_HEAD(buffers);
+        qd_buffer_free(curr_buf);
     }
 
     return count;
