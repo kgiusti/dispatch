@@ -566,13 +566,14 @@ qdr_http_connection_t *qdr_http_connection_ingress(qd_http_lsnr_t* listener)
     ingress_http_conn->server = listener->server;
     ingress_http_conn->pn_raw_conn = pn_raw_connection();
 
+    //nghttp2 context object = session_data
     ingress_http_conn->session_data = new_qdr_http2_session_data_t();
     ZERO(ingress_http_conn->session_data);
     DEQ_INIT(ingress_http_conn->session_data->streams);
     ingress_http_conn->session_data->conn = ingress_http_conn;
 
     nghttp2_session_server_new(&(ingress_http_conn->session_data->session), (nghttp2_session_callbacks*)http_adaptor->callbacks, ingress_http_conn->session_data);
-
+    send_settings_frame(ingress_http_conn->session_data);
     printf ("Server session is %p\n", (void *)ingress_http_conn->session_data->session);
 
     pn_raw_connection_set_context(ingress_http_conn->pn_raw_conn, ingress_http_conn);
@@ -847,7 +848,7 @@ void handle_outgoing_http(qdr_http2_stream_data_t *stream_data)
             // This does not really submit the request. We need to read the bytes
             //nghttp2_session_set_next_stream_id(session_data->session, stream_data->stream_id);
             printf ("send_settings_frame start **********************\n");
-            send_settings_frame(session_data);
+            //send_settings_frame(session_data);
             printf ("send_settings_frame end ************************\n");
             stream_data->stream_id = nghttp2_submit_headers(session_data->session,
                                                             0,
@@ -1023,6 +1024,7 @@ static int handle_incoming_http(qdr_http_connection_t *conn)
     qd_buffer_t *buf = DEQ_HEAD(buffers);
     while (buf) {
         nghttp2_session_mem_recv(conn->session_data->session, qd_buffer_base(buf), qd_buffer_size(buf));
+        //TODO - Free buffers here.
         buf = DEQ_NEXT(buf);
     }
 
