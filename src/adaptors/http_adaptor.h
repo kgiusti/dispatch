@@ -35,7 +35,7 @@ typedef struct qdr_http2_session_data_t qdr_http2_session_data_t;
 typedef struct qd_bridge_config_t       qd_bridge_config_t;
 typedef struct qdr_http2_stream_data_t  qdr_http2_stream_data_t;
 typedef struct qdr_http_connection_t    qdr_http_connection_t;
-//typedef struct qd_http2_user_context_t  qd_http2_user_context_t;
+DEQ_DECLARE(qdr_http2_stream_data_t, qd_http2_stream_data_list_t);
 
 struct qd_bridge_config_t {
     char *name;
@@ -61,6 +61,13 @@ struct qd_http_connector_t {
     qd_timer_t               *timer;
     long                      delay;
     DEQ_LINKS(qd_http_connector_t);
+};
+
+struct qdr_http2_session_data_t {
+    qd_http2_stream_data_list_t  streams;    // A session can have many streams.
+    nghttp2_session             *session;    // A pointer to the nghttp2s' session object
+    qd_buffer_list_t             buffs;      // Buffers for writing
+    qdr_http_connection_t       *conn;       // Connection associated with the session_data
 };
 
 struct qdr_http2_stream_data_t {
@@ -112,17 +119,8 @@ struct qdr_http_connection_t {
     bool                     connection_established;
     bool                     grant_initial_buffers;
     qdr_http2_stream_data_t *initial_stream;
+    char                     *reply_to;
 };
-
-DEQ_DECLARE(qdr_http2_stream_data_t, qd_http2_stream_data_list_t);
-
-struct qdr_http2_session_data_t {
-    qd_http2_stream_data_list_t  streams;
-    nghttp2_session             *session;
-    qdr_http_connection_t       *conn;
-    qd_buffer_list_t             buffs;
-};
-
 
 DEQ_DECLARE(qd_http_lsnr_t, qd_http_lsnr_list_t);
 ALLOC_DECLARE(qd_http_lsnr_t);

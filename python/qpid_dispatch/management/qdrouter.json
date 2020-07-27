@@ -1215,7 +1215,7 @@
                         "PYTHON",
                         "PROTOCOL",
                         "TCP_ADAPTOR",
-                        "HTTP-ADAPTOR",
+                        "HTTP_ADAPTOR",
                         "DEFAULT"
                     ],
                     "required": true,

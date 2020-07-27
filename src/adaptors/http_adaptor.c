@@ -61,6 +61,7 @@ typedef struct qdr_http_adaptor_t {
     qd_http_connector_list_t connectors;
     qd_log_source_t         *log_source;
     void                    *callbacks;
+    qd_log_source_t         *protocol_log_source;
 } qdr_http_adaptor_t;
 
 
@@ -123,7 +124,6 @@ qd_composed_field_t  *qd_message_compose_amqp(qd_message_t *msg,
     }
 
     if (correlation_id > 0) {
-        printf ("inserted correlation_id\n");
         qd_compose_insert_int(field, correlation_id);
     }
     else {
@@ -144,9 +144,6 @@ qd_composed_field_t  *qd_message_compose_amqp(qd_message_t *msg,
     }
     qd_compose_end_list(field);
 
-    //
-    // Application properties and Body will be added later
-    //
     return field;
 }
 
@@ -214,17 +211,16 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
                                                    const uint8_t *data,
                                                    size_t len, void *user_data)
 {
-    printf ("on_data_chunk_recv_callback ************ %i\n", (int)len);
-    qdr_http2_session_data_t *session_data = (qdr_http2_session_data_t *)user_data;
+    qdr_http_connection_t *conn = (qdr_http_connection_t *)user_data;
+    qdr_http2_session_data_t *session_data = conn->session_data;
     qdr_http2_stream_data_t *stream_data = nghttp2_session_get_stream_user_data(session_data->session, stream_id);
 
     qd_buffer_list_t buffers;
     DEQ_INIT(buffers);
     qd_buffer_list_append(&buffers, (uint8_t *)data, len);
     qd_message_extend(stream_data->message, &buffers);
-
     nghttp2_session_consume(session, stream_id, len);
-
+    qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i][S%"PRId32"] HTTP2 on_data_chunk_recv_callback data length %zu", conn->conn_id, stream_id, len);
     return 0;
 }
 
@@ -233,8 +229,9 @@ static int on_stream_close_callback(nghttp2_session *session,
                                     nghttp2_error_code error_code,
                                     void *user_data)
 {
-    printf ("on_stream_close_callback\n");
-    qdr_http2_session_data_t *session_data = (qdr_http2_session_data_t *)user_data;
+    qdr_http_connection_t *conn = (qdr_http_connection_t *)user_data;
+    qdr_http2_session_data_t *session_data = conn->session_data;
+    qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i][S%"PRId32"] HTTP2 on_stream_close_callback ", conn->conn_id, stream_id);
     free_http2_stream_data(session_data, stream_id);
     return 0;
 }
@@ -246,9 +243,10 @@ static ssize_t send_callback(nghttp2_session *session,
                              size_t length,
                              int flags,
                              void *user_data) {
-    printf ("send_callback length**************** %i\n", (int)length);
-    qdr_http2_session_data_t *session_data = (qdr_http2_session_data_t *)user_data;
+    qdr_http_connection_t *conn = (qdr_http_connection_t *)user_data;
+    qdr_http2_session_data_t *session_data = conn->session_data;
     qd_buffer_list_append(&(session_data->buffs), (uint8_t *)data, length);
+    qd_log(http_adaptor->protocol_log_source, QD_LOG_TRACE, "[C%i] HTTP2 send_callback data length %zu", conn->conn_id, length);
     return (ssize_t)length;
 }
 
@@ -259,9 +257,8 @@ static int on_begin_headers_callback(nghttp2_session *session,
                                      const nghttp2_frame *frame,
                                      void *user_data)
 {
-    printf ("**********on_begin_headers_callback******************\n");
-    qdr_http2_session_data_t *session_data = (qdr_http2_session_data_t *)user_data;
-    qdr_http_connection_t *conn = session_data->conn;
+    qdr_http_connection_t *conn = (qdr_http_connection_t *)user_data;
+    qdr_http2_session_data_t *session_data = conn->session_data;
 
     if (frame->hd.type == NGHTTP2_HEADERS) {
         if(frame->headers.cat == NGHTTP2_HCAT_REQUEST && conn->ingress) {
@@ -269,7 +266,7 @@ static int on_begin_headers_callback(nghttp2_session *session,
             int32_t stream_id = frame->hd.stream_id;
             qdr_terminus_t *target = qdr_terminus(0);
             qdr_http2_stream_data_t *stream_data = create_http2_stream_data(session_data, stream_id);
-            printf ("ingress_http_conn->config->address = %s\n", conn->config->address);
+            qd_log(http_adaptor->protocol_log_source, QD_LOG_TRACE, "[C%i] Processing incoming HTTP2 stream with id %"PRId32"", conn->conn_id, stream_id);
             //
             // For every stream create  -
             // 1. sending link with the configured address as the target
@@ -301,36 +298,16 @@ static int on_begin_headers_callback(nghttp2_session *session,
                                                           NULL,
                                                           &(stream_data->outgoing_id));
             qdr_link_set_context(stream_data->out_link, stream_data);
-
-            printf ("YOYOMA LINK 1 is %p\n", (void*)stream_data->out_link);
         }
         else if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
             int32_t stream_id = frame->hd.stream_id;
-            printf ("Response stream id is %i\n", (int) stream_id);
-
             qdr_http2_stream_data_t *stream_data = (qdr_http2_stream_data_t *)nghttp2_session_get_stream_user_data(session_data->session, stream_id);
             stream_data->message = qd_message();
-            //qdr_http2_stream_data_t *stream_data = create_http2_stream_data(session_data, stream_id);
         }
     }
 
     return 0;
 }
-
-//static qdr_http2_stream_data_t *create_http2_client_stream_data(const char *uri, const char *host, const char *port)
-//{
-//    //size_t extra = 7;
-//    qdr_http2_stream_data_t *stream_data = new_qdr_http2_stream_data_t();
-//    stream_data->uri = uri;
-//    stream_data->stream_id = -1;
-//    //stream_data->authoritylen = u->field_data[UF_HOST].len;
-//    //stream_data->authority = malloc(stream_data->authoritylen + extra);
-//
-//    stream_data->pathlen = 1;
-//
-//    return stream_data;
-//}
-
 
 /**
  *  nghttp2_on_header_callback: Called when nghttp2 library emits
@@ -345,26 +322,22 @@ static int on_header_callback(nghttp2_session *session,
                               uint8_t flags,
                               void *user_data)
 {
-    printf ("**********on_header_callback******************\n");
     int32_t stream_id = frame->hd.stream_id;
-    qdr_http2_session_data_t *session_data = (qdr_http2_session_data_t *) user_data;
+    qdr_http_connection_t *conn = (qdr_http_connection_t *)user_data;
+    qdr_http2_session_data_t *session_data = conn->session_data;
     qdr_http2_stream_data_t *stream_data = nghttp2_session_get_stream_user_data(session_data->session, stream_id);
 
     switch (frame->hd.type) {
         case NGHTTP2_HEADERS: {
             if (!stream_data->app_properties) {
-                printf ("New properties\n");
                 stream_data->app_properties = qd_compose(QD_PERFORMATIVE_APPLICATION_PROPERTIES, 0);
                 qd_compose_start_map(stream_data->app_properties);
             }
-            printf ("header_name is ************** %s\n", (char *)name);
-            printf ("on_header_callback session_data->app_properties is %p\n", (void *)stream_data->app_properties);
             qd_compose_insert_string_n(stream_data->app_properties, (const char *)name, namelen);
             qd_compose_insert_string_n(stream_data->app_properties, (const char *)value, valuelen);
-            printf ("header_value is ************** %s\n", (char *)value);
+            qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i][S%"PRId32"] HTTP2 HEADER [%s=%s]", conn->conn_id, stream_id, (char *)name, (char *)value);
         }
         break;
-
         default:
             break;
     }
@@ -375,76 +348,74 @@ static int on_header_callback(nghttp2_session *session,
 static void link_deliver(qdr_http2_stream_data_t *stream_data, bool receive_complete)
 {
     qd_composed_field_t  *header_prop = 0;
-    printf ("link_deliver ingress %i\n", (int)stream_data->session_data->conn->ingress);
-    if (stream_data->session_data->conn->ingress) {
+    qdr_http_connection_t *conn  = stream_data->session_data->conn;
+
+    if (conn->ingress) {
         if (stream_data->reply_to && !stream_data->in_dlv) {
             header_prop = qd_message_compose_amqp(stream_data->message,
-                                                                        0,
-                                                                        0,
-                                                                        stream_data->reply_to,
-                                                                        0,
-                                                                        0,
-                                                                        stream_data->stream_id);
+                                                  conn->config->address,
+                                                  0,
+                                                  stream_data->reply_to,
+                                                  0,
+                                                  0,
+                                                  stream_data->stream_id);
             qd_compose_end_map(stream_data->app_properties);
-            printf ("link_deliver stream_data->stream_id %i\n", (int)stream_data->stream_id);
-            //TODO - change name of app_properties
             stream_data->app_properties = qd_compose(QD_PERFORMATIVE_BODY_DATA, stream_data->app_properties);
             if (receive_complete) {
                 qd_compose_insert_binary(stream_data->app_properties, 0, 0);
             }
             qd_message_compose_3(stream_data->message, header_prop, stream_data->app_properties, receive_complete);
-            printf ("qdr_link_deliver inside link_deliver\n");
             stream_data->in_dlv = qdr_link_deliver(stream_data->in_link, stream_data->message, 0, false, 0, 0);
-
         }
     }
     else {
-        printf ("This is egress\n");
         header_prop = qd_message_compose_amqp(stream_data->message,
-                                              0,
+                                              stream_data->reply_to,
                                               0,
                                               0,
                                               0,
                                               0,
                                               stream_data->stream_id);
         qd_compose_end_map(stream_data->app_properties);
-        printf ("link_deliver stream_data->stream_id %i\n", (int)stream_data->stream_id);
-        //TODO - change name of app_properties
         stream_data->app_properties = qd_compose(QD_PERFORMATIVE_BODY_DATA, stream_data->app_properties);
         if (receive_complete) {
             qd_compose_insert_binary(stream_data->app_properties, 0, 0);
         }
         qd_message_compose_3(stream_data->message, header_prop, stream_data->app_properties, receive_complete);
-        printf ("qdr_link_deliver inside link_deliver\n");
         stream_data->in_dlv = qdr_link_deliver(stream_data->in_link, stream_data->message, 0, false, 0, 0);
     }
 }
 
-static void write_buffers(qdr_http2_session_data_t *session_data)
+static void write_buffers(qdr_http_connection_t *conn)
 {
-    int num_buffs = DEQ_SIZE(session_data->buffs);
+    qdr_http2_session_data_t *session_data = conn->session_data;
+    size_t buffs_to_write = pn_raw_connection_write_buffers_capacity(conn->pn_raw_conn);
+    size_t qd_buff_size = DEQ_SIZE(session_data->buffs);
+    size_t num_buffs = qd_buff_size > buffs_to_write ? buffs_to_write : qd_buff_size;
     pn_raw_buffer_t raw_buffers[num_buffs];
     qd_buffer_t *qd_buff = DEQ_HEAD(session_data->buffs);
+
     int i = 0;
-    while (qd_buff) {
-        printf ("qd_buff in handle_outgoing_http %p\n", (void *)qd_buff);
+    int total_bytes = 0;
+    while (i < num_buffs && qd_buff != 0) {
         raw_buffers[i].bytes = (char *)qd_buffer_base(qd_buff);
-        raw_buffers[i].capacity = qd_buffer_size(qd_buff);
-        raw_buffers[i].size = qd_buffer_size(qd_buff);
+        size_t buffer_size = qd_buffer_size(qd_buff);
+        raw_buffers[i].capacity = buffer_size;
+        raw_buffers[i].size = buffer_size;
+        total_bytes += buffer_size;
         raw_buffers[i].offset = 0;
         raw_buffers[i].context = (uintptr_t) qd_buff;
         DEQ_REMOVE_HEAD(session_data->buffs);
         qd_buff = DEQ_HEAD(session_data->buffs);
         i ++;
     }
+    qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i] Writing %i bytes in write_buffers", conn->conn_id, total_bytes);
+    if (i >0) {
+        size_t num_buffers_written = pn_raw_connection_write_buffers(session_data->conn->pn_raw_conn, raw_buffers, num_buffs);
+        assert(num_buffs == num_buffers_written);
+    }
 
-    pn_raw_connection_write_buffers(session_data->conn->pn_raw_conn, raw_buffers, num_buffs);
 
-    //
-    // The buffers that we already in the session_data->buffs have been mapped onto pn_raw_buffers
-    // We will initialize the buffers
-    //
-    DEQ_INIT(session_data->buffs);
 }
 
 //static void send_window_update_frame(qdr_http2_session_data_t *session_data, int32_t stream_id)
@@ -458,8 +429,9 @@ static void write_buffers(qdr_http2_session_data_t *session_data)
 //}
 
 
-static void send_settings_frame(qdr_http2_session_data_t *session_data)
+static void send_settings_frame(qdr_http_connection_t *conn)
 {
+    qdr_http2_session_data_t *session_data = conn->session_data;
     nghttp2_settings_entry iv[3] = {{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100},
                                     {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, 65536},
                                     {NGHTTP2_SETTINGS_ENABLE_PUSH, 0}};
@@ -467,92 +439,62 @@ static void send_settings_frame(qdr_http2_session_data_t *session_data)
     // You must call nghttp2_session_send after calling nghttp2_submit_settings
     int rv = nghttp2_submit_settings(session_data->session, NGHTTP2_FLAG_NONE, iv, ARRLEN(iv));
     if (rv != 0) {
-        printf ("Fatal error in nghttp2_submit_settings\n");
+        qd_log(http_adaptor->log_source, QD_LOG_INFO, "[C%i] Fatal error sending settings frame, rv=%i", conn->conn_id, rv);
     }
     nghttp2_session_send(session_data->session);
-    write_buffers(session_data);
+    write_buffers(session_data->conn);
 }
 
 
 static int on_frame_recv_callback(nghttp2_session *session,
                                   const nghttp2_frame *frame, void *user_data)
 {
-
-    qdr_http2_session_data_t *session_data = (qdr_http2_session_data_t *)user_data;
+    qdr_http_connection_t *conn = (qdr_http_connection_t *)user_data;
+    qdr_http2_session_data_t *session_data = conn->session_data;
 
     int32_t stream_id = frame->hd.stream_id;
     qdr_http2_stream_data_t *stream_data = nghttp2_session_get_stream_user_data(session_data->session, stream_id);
 
-    if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
-        printf ("on_frame_recv_callback Response stream_id %i\n", (int)stream_data->stream_id);
-    }
-
-    printf ("**********on_frame_recv_callback stream_data ******************%p\n", (void *)stream_data);
-
     switch (frame->hd.type) {
     case NGHTTP2_SETTINGS: {
-        // Respond to the SETTINGS frame sent by the peer with your own SETTINGS frame.
-        printf ("NGHTTP2_SETTINGS 1\n");
-        //send_settings_frame(session_data);
-        printf ("NGHTTP2_SETTINGS 2\n");
+        qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i][S%"PRId32"] HTTP2 SETTINGS frame received", conn->conn_id, stream_id);
     }
     break;
-    case NGHTTP2_WINDOW_UPDATE: {
-        //send_window_update_frame(session_data, stream_id);
-        printf ("on_frame_recv_callback NGHTTP2_WINDOW_UPDATE\n");
-        int32_t stream_remote_window_size = nghttp2_session_get_stream_remote_window_size(session_data->session, stream_id);
-        int32_t stream_local_window_size = nghttp2_session_get_stream_local_window_size(session_data->session, stream_id);
-        int32_t session_get_effective_local_window_size = nghttp2_session_get_effective_local_window_size(session_data->session);
-        // Defaults to 65535
-        int32_t local_window_size = nghttp2_session_get_local_window_size(session_data->session);
-        // 1073741824
-        int32_t session_get_remote_window_size = nghttp2_session_get_remote_window_size(session_data->session);
-        printf ("stream_remote_window_size =%i\n", stream_remote_window_size );
-        printf ("stream_local_window_size=%i\n", stream_local_window_size);
-        printf ("session_get_effective_local_window_size=%i\n", session_get_effective_local_window_size);
-        printf ("local_window_size=%i\n", local_window_size);
-        printf ("session_get_remote_window_size=%i\n", session_get_remote_window_size);
-    }
+    case NGHTTP2_WINDOW_UPDATE:
+        qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i][S%"PRId32"] HTTP2 WINDOW_UPDATE frame received", conn->conn_id, stream_id);
     break;
     case NGHTTP2_DATA: {
+        qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i][S%"PRId32"] HTTP2 DATA frame received", conn->conn_id, stream_id);
         if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) {
-            printf ("Receive complete is true NGHTTP2_DATA\n");
+            qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i][S%"PRId32"] HTTP2 END_STREAM flag received", conn->conn_id, stream_id);
             MSG_CONTENT(stream_data->message)->receive_complete = true;
         }
         if (stream_data->in_dlv) {
             qdr_delivery_continue(http_adaptor->core, stream_data->in_dlv, false);
-            printf ("qdr_delivery_continue\n");
         }
     }
     break;
     case NGHTTP2_HEADERS:{
-        /* All the headers have been received. Send out the AMQP message */
+        qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i][S%"PRId32"] HTTP2 HEADERS frame received", conn->conn_id, stream_id);
         if (frame->hd.flags & NGHTTP2_FLAG_END_HEADERS) {
-            printf ("******END HEADERS*************\n");
+            /* All the headers have been received. Send out the AMQP message */
+            qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i][S%"PRId32"] HTTP2 END_HEADERS flag received", conn->conn_id, stream_id);
             stream_data->entire_header_arrived = true;
             // All header fields have been received
             // End the map.
-
-            printf ("qdr_link_deliver MSG_CONTENT(session_data->message) %p\n", (void *)MSG_CONTENT(stream_data->message));
-            printf ("qdr_link_deliver session_data->app_properties %p\n", (void *)stream_data->app_properties);
-
             bool receive_complete = false;
             if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) {
                 receive_complete = true;
             }
 
             MSG_CONTENT(stream_data->message)->receive_complete = receive_complete;
-            printf ("on_frame_recv_callback Calling link_deliver 1\n");
             link_deliver(stream_data, receive_complete);
-            printf ("on_frame_recv_callback Calling link_deliver 2\n");
-        }
-        else {
-                printf ("else stream_data->reply_to && !stream_data->in_dlv\n");
         }
     }
     break;
+    default:
+        break;
   }
-
     return 0;
 }
 
@@ -566,19 +508,17 @@ qdr_http_connection_t *qdr_http_connection_ingress(qd_http_lsnr_t* listener)
     ingress_http_conn->server = listener->server;
     ingress_http_conn->pn_raw_conn = pn_raw_connection();
 
-    //nghttp2 context object = session_data
     ingress_http_conn->session_data = new_qdr_http2_session_data_t();
     ZERO(ingress_http_conn->session_data);
     DEQ_INIT(ingress_http_conn->session_data->streams);
     ingress_http_conn->session_data->conn = ingress_http_conn;
 
-    nghttp2_session_server_new(&(ingress_http_conn->session_data->session), (nghttp2_session_callbacks*)http_adaptor->callbacks, ingress_http_conn->session_data);
-    send_settings_frame(ingress_http_conn->session_data);
-    printf ("Server session is %p\n", (void *)ingress_http_conn->session_data->session);
+    nghttp2_session_server_new(&(ingress_http_conn->session_data->session), (nghttp2_session_callbacks*)http_adaptor->callbacks, ingress_http_conn);
 
     pn_raw_connection_set_context(ingress_http_conn->pn_raw_conn, ingress_http_conn);
     pn_listener_raw_accept(listener->pn_listener, ingress_http_conn->pn_raw_conn);
     ingress_http_conn->connection_established = true;
+    send_settings_frame(ingress_http_conn);
     return ingress_http_conn;
 }
 
@@ -688,41 +628,27 @@ static void qdr_copy_reply_to(qdr_http2_stream_data_t* stream_data, qd_iterator_
 static void qdr_http_second_attach(void *context, qdr_link_t *link,
                                   qdr_terminus_t *source, qdr_terminus_t *target)
 {
-    if (source->dynamic) {
-        printf ("Link qdr_http_second_attach is %p\n", (void *)link);
-        printf ("Dynamic source address 1 %s\n", (char *)qd_iterator_copy(qdr_field_iterator(source->address)));
-    }
-
     qdr_http2_stream_data_t *stream_data =  (qdr_http2_stream_data_t*)qdr_link_get_context(link);
     if (stream_data) {
         if (qdr_link_direction(link) == QD_OUTGOING && source->dynamic) {
             if (stream_data->session_data->conn->ingress) {
                 qdr_copy_reply_to(stream_data, qdr_terminus_get_address(source));
-                printf ("qdr_http_second_attach link_deliver 1\n");
                 link_deliver(stream_data, MSG_CONTENT(stream_data->message)->receive_complete);
-                printf ("qdr_http_second_attach link_deliver 2\n");
                 grant_read_buffers(stream_data->session_data->conn);
             }
             qdr_link_flow(http_adaptor->core, link, 10, false);
-        } else if (!stream_data->session_data->conn->ingress) {
-            //for egress we can start reading from the socket once we
-            //have the link to send messages over
-            //grant_read_buffers(stream_data->session_data->conn);
         }
     }
 }
 
 static void qdr_http_activate(void *notused, qdr_connection_t *c)
 {
-    printf("qdr_http_activate 1\n");
     qdr_http_connection_t* conn = (qdr_http_connection_t*) qdr_connection_get_context(c);
     if (conn) {
         if (conn->pn_raw_conn) {
-            printf("qdr_http_activate 2 %p\n", (void *)conn);
             qd_log(http_adaptor->log_source, QD_LOG_INFO, "[C%i] Activation triggered, calling pn_raw_connection_wake()", conn->conn_id);
             pn_raw_connection_wake(conn->pn_raw_conn);
         } else if (conn->activate_timer) {
-            printf("qdr_http_activate 3\n");
             // On egress, the raw connection is only created once the
             // first part of the message encapsulating the
             // client->server half of the stream has been
@@ -732,7 +658,6 @@ static void qdr_http_activate(void *notused, qdr_connection_t *c)
             qd_log(http_adaptor->log_source, QD_LOG_INFO, "[C%i] Activation triggered, no socket yet so scheduling timer", conn->conn_id);
             qd_timer_schedule(conn->activate_timer, 0);
         } else {
-            printf("qdr_http_activate 4\n");
             qd_log(http_adaptor->log_source, QD_LOG_ERROR, "[C%i] Cannot activate", conn->conn_id);
         }
     }
@@ -740,7 +665,6 @@ static void qdr_http_activate(void *notused, qdr_connection_t *c)
 
 static int qdr_http_push(void *context, qdr_link_t *link, int limit)
 {
-    printf ("in qdr_http_push calling qdr_link_process_deliveries\n");
     return qdr_link_process_deliveries(http_adaptor->core, link, limit);
 }
 
@@ -750,8 +674,6 @@ static void http_connector_establish(qdr_http_connection_t *conn)
     qd_log(http_adaptor->log_source, QD_LOG_INFO, "[C%i] Connecting to: %s", conn->conn_id, conn->config->host_port);
     conn->pn_raw_conn = pn_raw_connection();
     pn_raw_connection_set_context(conn->pn_raw_conn, conn);
-    printf ("conn->pn_raw_conn is %p\n", (void *)conn->pn_raw_conn);
-    printf ("conn->config->host_port %s\n", conn->config->host_port);
     pn_proactor_raw_connect(qd_server_proactor(conn->server), conn->pn_raw_conn, conn->config->host_port);
 }
 
@@ -762,52 +684,37 @@ ssize_t read_callback(nghttp2_session *session,
                                   void *user_data)
 {
     qd_buffer_t *qd_buff = source->ptr;
-    printf ("read_callback qd_buff is %p\n", (void *)qd_buff);
-    printf ("read_callback length is %i\n", (int)length);
     buf = qd_buffer_base(qd_buff);
     size_t ret_val = qd_buffer_size(qd_buff);
-    printf ("read_callback ret_val is %i\n", (int)ret_val);
     return ret_val;
 }
 
 void handle_outgoing_http(qdr_http2_stream_data_t *stream_data)
 {
-    printf ("handle_outgoing_http start\n");
-    printf ("handle_outgoing_http start stream_data is %p\n", (void *)stream_data);
     qdr_http2_session_data_t *session_data = stream_data->session_data;
+    qdr_http_connection_t *conn = session_data->conn;
     qd_message_t *message = stream_data->message;
+
     if (stream_data->out_dlv) {
-        printf ("Yes stream_data->out_dlv stream_data->header_sent %i\n", stream_data->header_sent);
         if (!stream_data->header_sent) {
             stream_data->header_sent = true;
 
-            qd_message_depth_status_t  depth_valid = qd_message_check_depth(message, QD_DEPTH_HEADER);
-            printf ("qd_message_depth_status_t is %i\n", (int)depth_valid);
-
             // The HTTP Path is in the AMQP to field.
-            qd_iterator_t *to = qd_message_field_iterator(message, QD_FIELD_TO);
-            char *path = (char *)qd_iterator_copy(to);
+            //qd_iterator_t *to = qd_message_field_iterator(message, QD_FIELD_TO);
+            //char *path = (char *)qd_iterator_copy(to);
 
-            qd_iterator_t *subject = qd_message_field_iterator(message, QD_FIELD_SUBJECT);
-            char *http_method = (char *)qd_iterator_copy(subject);
+            //qd_iterator_t *subject = qd_message_field_iterator(message, QD_FIELD_SUBJECT);
+            //char *http_method = (char *)qd_iterator_copy(subject);
 
-            qd_iterator_t *ct = qd_message_field_iterator(message, QD_FIELD_CONTENT_TYPE);
-            char *content_type = (char *)qd_iterator_copy(ct);
+            //qd_iterator_t *ct = qd_message_field_iterator(message, QD_FIELD_CONTENT_TYPE);
+            //char *content_type = (char *)qd_iterator_copy(ct);
 
-            printf ("compose_http method = %s\n", http_method);
-            printf ("compose_http path = %s\n", path);
-            printf ("compose_http accept = %s\n", content_type);
-
-            //const char *uri = stream_data->uri;
-
-            qd_iterator_t *app_properties_iter = qd_message_field_iterator(stream_data->message, QD_FIELD_APPLICATION_PROPERTIES);
+            qd_iterator_t *app_properties_iter = qd_message_field_iterator(message, QD_FIELD_APPLICATION_PROPERTIES);
             qd_parsed_field_t *app_properties_fld = qd_parse(app_properties_iter);
 
             uint32_t count = qd_parse_sub_count(app_properties_fld);
 
-            nghttp2_nv hdrs_1[count];
-
-            printf("app_properties_fld count=%i\n", (int)count);
+            nghttp2_nv hdrs[count];
 
             for (uint32_t idx = 0; idx < count; idx++) {
                 qd_parsed_field_t *key = qd_parse_sub_key(app_properties_fld, idx);
@@ -815,25 +722,16 @@ void handle_outgoing_http(qdr_http2_stream_data_t *stream_data)
                 qd_iterator_t *key_raw = qd_parse_raw(key);
                 qd_iterator_t *val_raw = qd_parse_raw(val);
 
-                hdrs_1[idx].name = (uint8_t *)qd_iterator_copy(key_raw);
-                printf ("hdrs_1[idx].name=%s\n", (char *)hdrs_1[idx].name);
-
-                hdrs_1[idx].value = (uint8_t *)qd_iterator_copy(val_raw);
-
-                printf ("hdrs_1[idx].value=%s\n", (char *)hdrs_1[idx].value);
-                hdrs_1[idx].namelen = qd_iterator_length(key_raw);
-
-                printf ("hdrs_1[idx].namelen=%i\n", (int)hdrs_1[idx].namelen);
-
-                hdrs_1[idx].valuelen = qd_iterator_length(val_raw);
-                hdrs_1[idx].flags = NGHTTP2_NV_FLAG_NONE;
+                hdrs[idx].name = (uint8_t *)qd_iterator_copy(key_raw);
+                hdrs[idx].value = (uint8_t *)qd_iterator_copy(val_raw);
+                hdrs[idx].namelen = qd_iterator_length(key_raw);
+                hdrs[idx].valuelen = qd_iterator_length(val_raw);
+                hdrs[idx].flags = NGHTTP2_NV_FLAG_NONE;
+                qd_log(http_adaptor->log_source, QD_LOG_TRACE, "[C%i] HTTP2 Outgoing HEADER [%s=%s]", conn->conn_id, (char *)hdrs[idx].name, (char *)hdrs[idx].value);
             }
 
             // TODO - Fix this.
             int stream_id = stream_data->session_data->conn->ingress?stream_data->stream_id: -1;
-//
-//            printf ("nghttp2_submit_headers stream_data->stream_id is %i\n", (int) stream_data->stream_id);
-//            printf ("nghttp2_submit_headers session is %p\n", (void*) session_data->session);
             /*
              * case NGHTTP2_HEADERS
              * case NGHTTP2_PRIORITY
@@ -847,18 +745,14 @@ void handle_outgoing_http(qdr_http2_stream_data_t *stream_data)
              */
             // This does not really submit the request. We need to read the bytes
             //nghttp2_session_set_next_stream_id(session_data->session, stream_data->stream_id);
-            printf ("send_settings_frame start **********************\n");
-            //send_settings_frame(session_data);
-            printf ("send_settings_frame end ************************\n");
             stream_data->stream_id = nghttp2_submit_headers(session_data->session,
                                                             0,
-                                                            stream_id, NULL, hdrs_1,
+                                                            stream_id, NULL, hdrs,
                                                             count,
                                                             stream_data);
 
             nghttp2_session_send(session_data->session);
-            write_buffers(session_data);
-            printf ("handle_outgoing_http end\n");
+            write_buffers(session_data->conn);
 
         }
 //        qd_buffer_t *head_buff = DEQ_HEAD(MSG_CONTENT(message)->buffers);
@@ -884,36 +778,20 @@ void handle_outgoing_http(qdr_http2_stream_data_t *stream_data)
 //        }
 
     }
-    else {
-        printf ("no stream_data->out_dlv\n");
-    }
 }
 
 static uint64_t qdr_http_deliver(void *context, qdr_link_t *link, qdr_delivery_t *delivery, bool settled)
 {
-    printf ("qdr_http_deliver *************\n");
     qdr_http2_stream_data_t *stream_data =  (qdr_http2_stream_data_t*)qdr_link_get_context(link);
-
-    if (stream_data->session_data->conn->ingress) {
-        printf ("YOYOMA LINK 2 is %p\n", (void*)link);
-    }
-
-    printf ("qdr_http_deliver outside if stream_dispatcher stream_data is %p\n", (void *)stream_data);
-    printf ("qdr_http_deliver outside if link is %p\n", (void *)link);
-
     qdr_http_connection_t *conn = stream_data->session_data->conn;
 
     if (link == stream_data->session_data->conn->stream_dispatcher) {
-        printf ("Delivery for stream dispatcher\n");
-
         qd_message_t *msg = qdr_delivery_message(delivery);
         qd_iterator_t     *iter  = qd_message_field_iterator_typed(msg, QD_FIELD_CORRELATION_ID);
         qd_parsed_field_t *cid_field = qd_parse(iter);
         uint32_t stream_id = qd_parse_as_int(cid_field);
 
         qdr_http2_stream_data_t *stream_data = create_http2_stream_data(conn->session_data, stream_id);
-
-        printf ("session_data->session is %p\n", (void *)stream_data->session_data->session);
 
         stream_data->message = qdr_delivery_message(delivery);
         stream_data->out_dlv = delivery;
@@ -930,15 +808,13 @@ static uint64_t qdr_http_deliver(void *context, qdr_link_t *link, qdr_delivery_t
                                                      true,
                                                      delivery,
                                                      &(stream_data->outgoing_id));
-        printf ("qdr_http_deliver if stream_datais %p\n", (void *)stream_data);
-        printf ("qdr_http_deliver if stream_data->out_link is %p\n", (void *)stream_data->out_link);
         qdr_link_set_context(stream_data->out_link, stream_data);
-        printf ("stream_id after parse is %i\n", (int)stream_id);
+        qd_iterator_t *fld_iter = qd_message_field_iterator(msg, QD_FIELD_REPLY_TO);
+        char *reply_to = (char *)qd_iterator_copy(fld_iter);
+        stream_data->reply_to = malloc(qd_iterator_length(fld_iter) + 1);
+        strcpy(stream_data->reply_to, reply_to);
 
-        //Create stream_data and add it to the session_data->streams
-        //qdr_http2_stream_data_t *stream_data = create_http2_stream_data(conn->session_data, stream_id);
-        printf ("qdr_http_deliver if stream_dispatcher stream_data is %p\n", (void *)stream_data);
-        char *reply_to = (char *)qd_iterator_copy(qd_message_field_iterator(msg, QD_FIELD_REPLY_TO));
+        printf ("qdr_http_deliver if stream_dispatcher reply_to is %s\n", (char *)reply_to);
 
         // Sender link
         qdr_terminus_t *target = qdr_terminus(0);
@@ -955,21 +831,18 @@ static uint64_t qdr_http_deliver(void *context, qdr_link_t *link, qdr_delivery_t
 
         // TODO - This is wrong
         qdr_link_set_context(stream_data->in_link, stream_data);
-        printf ("qdr_http_deliver if stream_data->in_link is %p\n", (void *)stream_data->in_link);
+        printf ("qdr_http_deliver stream_data->session_data->conn->stream_dispatcher %p\n", (void *)stream_data->in_link);
 
         //Let's make an outbound connection to the configured connector.
         qdr_http_connection_t *conn = stream_data->session_data->conn;
         if (!conn->connection_established) {
             if (!conn->ingress) {
-                printf ("http_connector_establish\n");
                 http_connector_establish(conn);
             }
         }
     }
     else if (stream_data) {
-        printf ("Calling handle_outgoing_http from qdr_http_deliver 1\n");
         if (conn->connection_established) {
-            printf ("Calling handle_outgoing_http from qdr_http_deliver 2\n");
             if (conn->ingress) {
                 stream_data->message = qdr_delivery_message(delivery);
                 stream_data->out_dlv = delivery;
@@ -1002,7 +875,6 @@ void qd_dispatch_delete_http_connector(qd_dispatch_t *qd, void *impl)
 
 static int handle_incoming_http(qdr_http_connection_t *conn)
 {
-    printf ("handle_incoming_http %p and incoming is %i\n", (void *)conn, conn->ingress);
     qd_buffer_list_t buffers;
     DEQ_INIT(buffers);
     pn_raw_buffer_t raw_buffers[READ_BUFFERS];
@@ -1011,7 +883,9 @@ static int handle_incoming_http(qdr_http_connection_t *conn)
     while ( (n = pn_raw_connection_take_read_buffers(conn->pn_raw_conn, raw_buffers, READ_BUFFERS)) ) {
         for (size_t i = 0; i < n && raw_buffers[i].bytes; ++i) {
             qd_buffer_t *buf = (qd_buffer_t*) raw_buffers[i].context;
-            qd_buffer_insert(buf, raw_buffers[i].size);
+            uint32_t raw_buff_size = raw_buffers[i].size;
+            qd_buffer_insert(buf, raw_buff_size);
+            qd_log(http_adaptor->log_source, QD_LOG_DEBUG, "[C%i] Inserting qd_buffer of size %"PRIu32" ", conn->conn_id, raw_buff_size);
             count += raw_buffers[i].size;
             DEQ_INSERT_TAIL(buffers, buf);
         }
@@ -1116,17 +990,13 @@ static void handle_connection_event(pn_event_t *e, qd_server_t *qd_server, void 
         break;
     }
     case PN_RAW_CONNECTION_NEED_READ_BUFFERS: {
-        if (!conn->grant_initial_buffers) {
-            conn->grant_initial_buffers = true;
-            grant_read_buffers(conn);
-        }
+        grant_read_buffers(conn);
         qd_log(log, QD_LOG_INFO, "[C%i] Need read buffers", conn->conn_id);
         while (qdr_connection_process(conn->qdr_conn)) {}
         break;
     }
     case PN_RAW_CONNECTION_WAKE: {
         qd_log(log, QD_LOG_INFO, "[C%i] Wake-up", conn->conn_id);
-        printf ("PN_RAW_CONNECTION_WAKE\n");
         while (qdr_connection_process(conn->qdr_conn)) {}
         break;
     }
@@ -1143,10 +1013,9 @@ static void handle_connection_event(pn_event_t *e, qd_server_t *qd_server, void 
         while ( (n = pn_raw_connection_take_written_buffers(conn->pn_raw_conn, buffs, WRITE_BUFFERS)) ) {
             for (size_t i = 0; i < n; ++i) {
                 qd_buffer_t *qd_buff = (qd_buffer_t *) buffs[i].context;
-                if (qd_buff) {
-                    printf ("Freeing qd_buffer %p\n", (void*)qd_buff);
+                assert(qd_buff);
+                if (qd_buff)
                     qd_buffer_free(qd_buff);
-                }
             }
         }
         qd_log(log, QD_LOG_INFO, "[C%i] Wrote %i bytes", conn->conn_id, written);
@@ -1279,7 +1148,6 @@ static void on_activate(void *context)
 
 qdr_http_connection_t *qdr_http_connection_egress(qd_http_connector_t *connector)
 {
-    printf ("qdr_http_connection_egress *********\n");
     qdr_http_connection_t* egress_conn = NEW(qdr_http_connection_t);
     ZERO(egress_conn);
     //FIXME: this is only needed while waiting for raw_connection_wake
@@ -1292,14 +1160,12 @@ qdr_http_connection_t *qdr_http_connection_egress(qd_http_connector_t *connector
     egress_conn->config = &(connector->config);
     egress_conn->server = connector->server;
 
-    qdr_http2_session_data_t *session_data = new_qdr_http2_session_data_t();
-    egress_conn->session_data = session_data;
+    egress_conn->session_data = new_qdr_http2_session_data_t();
     ZERO(egress_conn->session_data);
     DEQ_INIT(egress_conn->session_data->streams);
     egress_conn->session_data->conn = egress_conn;
 
-    nghttp2_session_client_new(&session_data->session, (nghttp2_session_callbacks*)http_adaptor->callbacks, session_data);
-    printf ("Client session is %p\n", (void *)session_data->session);
+    nghttp2_session_client_new(&egress_conn->session_data->session, (nghttp2_session_callbacks*)http_adaptor->callbacks, (void *)egress_conn);
 
     //pn_raw_connection_set_context(egress_conn->pn_raw_conn, egress_conn);
     qdr_connection_info_t *info = qdr_connection_info(false, //bool             is_encrypted,
@@ -1352,9 +1218,10 @@ qdr_http_connection_t *qdr_http_connection_egress(qd_http_connector_t *connector
     // Create a dummy stream_data object and set that as context
     qdr_http2_stream_data_t *stream_data = new_qdr_http2_stream_data_t();
     ZERO(stream_data);
-    stream_data->stream_id = 0;
+
     stream_data->session_data = new_qdr_http2_session_data_t();
     ZERO(stream_data->session_data);
+    stream_data->stream_id = 0;
     stream_data->session_data->conn = egress_conn;
 
     qdr_link_set_context(egress_conn->stream_dispatcher, stream_data);
@@ -1373,8 +1240,6 @@ qd_http_connector_t *qd_dispatch_configure_http_connector(qd_dispatch_t *qd, qd_
     }
     DEQ_ITEM_INIT(c);
     DEQ_INSERT_TAIL(http_adaptor->connectors, c);
-    //log_tcp_bridge_config(http_adaptor->log_source, &c->config, "TcpConnector");
-    //TODO: probably want a pool of egress connections, ready to handle incoming 'connection' streamed messages
     qdr_http_connection_egress(c);
     return c;
 
