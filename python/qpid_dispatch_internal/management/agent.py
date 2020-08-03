@@ -631,19 +631,6 @@ class HttpConnectorEntity(EntityAdapter):
     def _delete(self):
         self._qd.qd_dispatch_delete_http_connector(self._dispatch, self._implementations[0].key)
 
-class HttpConnectorEntity(EntityAdapter):
-    def create(self):
-        return self._qd.qd_dispatch_configure_http_connector(self._dispatch, self)
-
-    def _identifier(self):
-        return _host_port_name_identifier(self)
-
-    def __str__(self):
-        return super(HttpConnectorEntity, self).__str__().replace("Entity(", "HttpConnectorEntity(")
-
-    def _delete(self):
-        self._qd.qd_dispatch_delete_http_connector(self._dispatch, self._implementations[0].key)
-
 
 class EntityCache(object):
     """
