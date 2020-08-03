@@ -120,12 +120,12 @@ static int handle_incoming(qdr_tcp_connection_t *conn)
     grant_read_buffers(conn);
 
     if (conn->instream) {
-        qd_message_extend(qdr_delivery_message(conn->instream), &buffers);
+        //qd_message_extend(qdr_delivery_message(conn->instream), &buffers);
         qdr_delivery_continue(tcp_adaptor->core, conn->instream, false);
         qd_log(tcp_adaptor->log_source, QD_LOG_DEBUG, "[C%i][L%i] Continuing message with %i bytes", conn->conn_id, conn->incoming_id, count);
     } else {
         qd_message_t *msg = qd_message();
-        qd_message_compose_stream(msg, conn->config.address, conn->reply_to, &buffers);
+        //qd_message_compose_stream(msg, conn->config.address, conn->reply_to, &buffers);
 
         /*
         qd_composed_field_t *props = qd_compose(QD_PERFORMATIVE_PROPERTIES, 0);
@@ -187,7 +187,7 @@ static void handle_outgoing(qdr_tcp_connection_t *conn)
         pn_raw_buffer_t buffs[WRITE_BUFFERS];
         //populate the raw buffers from message buffers but only want the body
         //need to track where we got to
-        int n = qd_message_read_body(msg, buffs, WRITE_BUFFERS);
+        int n = 0; //qd_message_read_body(msg, buffs, WRITE_BUFFERS);
         size_t used = pn_raw_connection_write_buffers(conn->socket, buffs, n);
         int bytes_written = 0;
         for (size_t i = 0; i < used; i++) {
@@ -346,7 +346,7 @@ static void handle_connection_event(pn_event_t *e, qd_server_t *qd_server, void 
             for (size_t i = 0; i < n; ++i) {
                 written += buffs[i].size;
             }
-            qd_message_release_body(qdr_delivery_message(conn->outstream), buffs, n);
+            //qd_message_release_body(qdr_delivery_message(conn->outstream), buffs, n);
         }
         qd_log(log, QD_LOG_DEBUG, "[C%i] Wrote %i bytes", conn->conn_id, written);
         while (qdr_connection_process(conn->conn)) {}

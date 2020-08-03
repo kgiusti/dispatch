@@ -146,11 +146,6 @@ static inline uint32_t qd_buffer_set_fanout(qd_buffer_t *buf, uint32_t value)
     return sys_atomic_set(&buf->bfanout, value);
 }
 
-static inline uint32_t qd_buffer_get_fanout(qd_buffer_t *buf)
-{
-    return buf->bfanout;
-}
-
 /**
  * Get the fanout value on the buffer.
  * @return the count
@@ -188,17 +183,6 @@ static inline unsigned char *qd_buffer_at(const qd_buffer_t *buf, size_t len)
     assert(len <= BUFFER_SIZE);
     return ((unsigned char*) &buf[1]) + len;
 }
-
-/**
- * qd_buffer_list_append
- *
- * Append new data to a buffer list using freespace efficiently and adding new buffers when necessary.
- *
- * @param buflist Pointer to a buffer list that will possibly be changed by adding new buffers
- * @param data Pointer to raw binary data to be added to the buffer list
- * @param len The number of bytes of data to append
- */
-void qd_buffer_list_append(qd_buffer_list_t *buflist, uint8_t *data, size_t len);
 
 /**
  * qd_buffer_list_append

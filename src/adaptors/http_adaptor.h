@@ -120,6 +120,7 @@ struct qdr_http_connection_t {
     bool                     grant_initial_buffers;
     qdr_http2_stream_data_t *initial_stream;
     char                     *reply_to;
+    nghttp2_data_provider    data_prd;
 };
 
 DEQ_DECLARE(qd_http_lsnr_t, qd_http_lsnr_list_t);

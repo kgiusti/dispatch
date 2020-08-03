@@ -2238,10 +2238,10 @@ void qd_message_compose_2(qd_message_t *msg, qd_composed_field_t *field, bool co
 }
 
 
-void qd_message_compose_3(qd_message_t *msg, qd_composed_field_t *field1, qd_composed_field_t *field2, bool receive_complete)
+void qd_message_compose_3(qd_message_t *msg, qd_composed_field_t *field1, qd_composed_field_t *field2, bool receive_comple)
 {
     qd_message_content_t *content        = MSG_CONTENT(msg);
-    content->receive_complete            = receive_complete;
+    content->receive_complete            = receive_comple;
     qd_buffer_list_t     *field1_buffers = qd_compose_buffers(field1);
     qd_buffer_list_t     *field2_buffers = qd_compose_buffers(field2);
 
@@ -2360,12 +2360,15 @@ qd_message_body_data_result_t qd_message_next_body_data(qd_message_t *in_msg, qd
     qd_message_pvt_t       *msg       = (qd_message_pvt_t*) in_msg;
     qd_message_body_data_t *body_data = 0;
 
+    printf ("qd_message_next_body_data 1\n");
     if (!msg->body_cursor) {
+        printf ("qd_message_next_body_data 2\n");
         //
         // We haven't returned a body-data record for this message yet.
         //
         qd_message_depth_status_t status = qd_message_check_depth(in_msg, QD_DEPTH_BODY);
         if (status == QD_MESSAGE_DEPTH_OK) {
+            printf ("qd_message_next_body_data 3\n");
             body_data = new_qd_message_body_data_t();
             ZERO(body_data);
             body_data->owning_message = msg;
@@ -2373,6 +2376,8 @@ qd_message_body_data_result_t qd_message_next_body_data(qd_message_t *in_msg, qd
 
             find_last_buffer(&body_data->section, &msg->body_cursor, &msg->body_buffer);
             body_data->last_buffer = msg->body_buffer;
+
+            printf ("qd_message_next_body_data 4 %p\n", (void *)msg->body_buffer);
 
             assert(DEQ_SIZE(msg->body_data_list) == 0);
             DEQ_INSERT_TAIL(msg->body_data_list, body_data);
