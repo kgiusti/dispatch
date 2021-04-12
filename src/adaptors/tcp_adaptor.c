@@ -40,6 +40,9 @@ ALLOC_DEFINE(qd_tcp_connector_t);
 #define READ_BUFFERS 4
 #define WRITE_BUFFERS 4
 
+#define POLL_INTERVAL 10000  // 10 seconds
+#define WRITE_STALLED_TIMEOUT 30
+
 typedef struct qdr_tcp_connection_t qdr_tcp_connection_t;
 
 struct qdr_tcp_connection_t {
@@ -64,10 +67,13 @@ struct qdr_tcp_connection_t {
     bool                  raw_closed_write;
     qdr_delivery_t       *initial_delivery;
     qd_timer_t           *activate_timer;
+    qd_timer_t           *poll_timer;
     qd_bridge_config_t    config;
     qd_server_t          *server;
     char                 *remote_address;
     char                 *global_id;
+    int                   write_bufs_held;     // bufs owned by proton for writing
+    uint64_t              write_blocked_time;  // timestamp last write or written event
     uint64_t              bytes_in;
     uint64_t              bytes_out;
     uint64_t              opened_time;
@@ -128,6 +134,27 @@ static void on_activate(void *context)
         free_qdr_tcp_connection(conn);
     }
 }
+
+
+// timer callback - can run on any thread, possibly in parallel with the raw
+// connection event handler
+//
+static void on_poll(void *context)
+{
+    qdr_tcp_connection_t* conn = (qdr_tcp_connection_t*) context;
+
+    qd_log(tcp_adaptor->log_source, QD_LOG_ERROR, "[C%"PRIu64"] POLL", conn->conn_id);
+
+    sys_mutex_lock(conn->activation_lock);
+    if (conn->pn_raw_conn) {
+        pn_raw_connection_wake(conn->pn_raw_conn);
+        if (conn->poll_timer) {
+            qd_timer_schedule(conn->poll_timer, POLL_INTERVAL);
+        }
+    }
+    sys_mutex_unlock(conn->activation_lock);
+}
+
 
 static void grant_read_buffers(qdr_tcp_connection_t *conn)
 {
@@ -190,6 +217,9 @@ static int handle_incoming_impl(qdr_tcp_connection_t *conn, bool close_pending)
     //
     // Don't initiate an ingress stream message if we don't yet have a reply-to address and credit.
     //
+
+    qd_log(tcp_adaptor->log_source, QD_LOG_DEBUG, "[C%"PRIu64"][L%"PRIu64"] handle_incoming_impl *BEGIN*", conn->conn_id, conn->outgoing_id);
+    
     if (!pn_raw_connection_is_read_closed(conn->pn_raw_conn) && !conn->instream && ((conn->ingress && !conn->reply_to) || !conn->flow_enabled)) {
         if (conn->ingress && !conn->reply_to) {
             qd_log(tcp_adaptor->log_source, QD_LOG_DEBUG, "[C%"PRIu64"][L%"PRIu64"] Waiting for reply-to address to initiate message", conn->conn_id, conn->outgoing_id);
@@ -197,6 +227,9 @@ static int handle_incoming_impl(qdr_tcp_connection_t *conn, bool close_pending)
         if (!conn->flow_enabled) {
             qd_log(tcp_adaptor->log_source, QD_LOG_DEBUG, "[C%"PRIu64"][L%"PRIu64"] Waiting for credit to initiate message", conn->conn_id, conn->outgoing_id);
         }
+
+    qd_log(tcp_adaptor->log_source, QD_LOG_DEBUG, "[C%"PRIu64"][L%"PRIu64"] handle_incoming_impl *END* 1", conn->conn_id, conn->outgoing_id);
+        
         return 0;
     }
 
@@ -205,6 +238,7 @@ static int handle_incoming_impl(qdr_tcp_connection_t *conn, bool close_pending)
     //
     if (conn->q2_blocked) {
         qd_log(tcp_adaptor->log_source, QD_LOG_DEBUG, "[C%"PRIu64"] handle_incoming q2_blocked", conn->conn_id);
+    qd_log(tcp_adaptor->log_source, QD_LOG_DEBUG, "[C%"PRIu64"][L%"PRIu64"] handle_incoming_impl *END* 2", conn->conn_id, conn->outgoing_id);
         return 0;
     }
 
@@ -290,6 +324,9 @@ static int handle_incoming_impl(qdr_tcp_connection_t *conn, bool close_pending)
         conn->instream = qdr_link_deliver(conn->incoming, msg, 0, false, 0, 0, 0, 0);
         qd_log(tcp_adaptor->log_source, QD_LOG_DEBUG, "[C%"PRIu64"][L%"PRIu64"] Initiating message with %i bytes", conn->conn_id, conn->incoming_id, count);
     }
+
+    qd_log(tcp_adaptor->log_source, QD_LOG_DEBUG, "[C%"PRIu64"][L%"PRIu64"] handle_incoming_impl *END*", conn->conn_id, conn->outgoing_id);
+    
     return count;
 }
 
@@ -333,6 +370,9 @@ static void free_qdr_tcp_connection(qdr_tcp_connection_t* tc)
     if (tc->activate_timer) {
         qd_timer_free(tc->activate_timer);
     }
+    if (tc->poll_timer) {
+        qd_timer_free(tc->poll_timer);
+    }
     flush_outgoing_buffs(tc);
     sys_mutex_free(tc->activation_lock);
     //proactor will free the socket
@@ -341,6 +381,14 @@ static void free_qdr_tcp_connection(qdr_tcp_connection_t* tc)
 
 static void handle_disconnected(qdr_tcp_connection_t* conn)
 {
+
+    sys_mutex_lock(conn->activation_lock);
+    if (conn->poll_timer) {
+        qd_timer_free(conn->poll_timer);
+        conn->poll_timer = 0;
+    }
+    sys_mutex_unlock(conn->activation_lock);
+
     if (conn->instream) {
         qd_log(tcp_adaptor->log_source, QD_LOG_DEBUG, "[C%"PRIu64"][L%"PRIu64"] handle_disconnected - close instream", conn->conn_id, conn->incoming_id);
         qd_message_set_receive_complete(qdr_delivery_message(conn->instream));
@@ -467,6 +515,23 @@ static bool write_outgoing_buffs(qdr_tcp_connection_t *conn)
 
         conn->outgoing_buff_count -= used;
         conn->outgoing_buff_idx   += used;
+
+        if (used > 0) {
+            conn->write_bufs_held += used;
+            if (conn->write_blocked_time == 0) {
+                // whatever
+                conn->write_blocked_time = tcp_adaptor->core->uptime_ticks;
+                qd_log(tcp_adaptor->log_source, QD_LOG_ERROR, "[C%"PRIu64"] WBL SET %"PRIu64" %d bufs", conn->conn_id, conn->write_blocked_time, conn->write_bufs_held);
+                //fprintf(stdout, "tcp_adaptor %p write full\n", (void *)conn);
+                //sys_mutex_lock(conn->activation_lock);
+                //if (conn->poll_timer)
+                //qd_timer_schedule(conn->poll_timer, 5);
+                //sys_mutex_unlock(conn->activation_lock);
+            }
+            else
+                qd_log(tcp_adaptor->log_source, QD_LOG_ERROR, "[C%"PRIu64"] WBL + %d new bufs", conn->conn_id, conn->write_bufs_held);
+
+        }
     }
     return result;
 }
@@ -611,6 +676,10 @@ static void handle_connection_event(pn_event_t *e, qd_server_t *qd_server, void 
 {
     qdr_tcp_connection_t *conn = (qdr_tcp_connection_t*) context;
     qd_log_source_t *log = tcp_adaptor->log_source;
+
+    qd_log(log, QD_LOG_INFO, "[C%"PRIu64"] connection event %s *BEGIN*", conn->conn_id, pn_event_type_name(pn_event_type(e)));
+
+    
     switch (pn_event_type(e)) {
     case PN_RAW_CONNECTION_CONNECTED: {
         if (conn->ingress) {
@@ -637,6 +706,7 @@ static void handle_connection_event(pn_event_t *e, qd_server_t *qd_server, void 
         conn->raw_closed_read = true;
         sys_mutex_unlock(conn->activation_lock);
         pn_raw_connection_close(conn->pn_raw_conn);
+        qd_log(log, QD_LOG_DEBUG, "[C%"PRIu64"] PN_RAW_CONNECTION_CLOSED_READ *DONE*", conn->conn_id);
         break;
     }
     case PN_RAW_CONNECTION_CLOSED_WRITE: {
@@ -645,6 +715,8 @@ static void handle_connection_event(pn_event_t *e, qd_server_t *qd_server, void 
         conn->raw_closed_write = true;
         sys_mutex_unlock(conn->activation_lock);
         pn_raw_connection_close(conn->pn_raw_conn);
+        conn->write_blocked_time = 0;
+        qd_log(log, QD_LOG_DEBUG, "[C%"PRIu64"] PN_RAW_CONNECTION_CLOSED_WRITE *DONE*", conn->conn_id);
         break;
     }
     case PN_RAW_CONNECTION_DISCONNECTED: {
@@ -653,6 +725,7 @@ static void handle_connection_event(pn_event_t *e, qd_server_t *qd_server, void 
         conn->pn_raw_conn = 0;
         sys_mutex_unlock(conn->activation_lock);
         handle_disconnected(conn);
+        qd_log(log, QD_LOG_INFO, "[C%"PRIu64"] PN_RAW_CONNECTION_DISCONNECTED *DONE*", conn->conn_id);
         break;
     }
     case PN_RAW_CONNECTION_NEED_WRITE_BUFFERS: {
@@ -680,7 +753,17 @@ static void handle_connection_event(pn_event_t *e, qd_server_t *qd_server, void 
         else {
             sys_mutex_unlock(conn->activation_lock);
         }
-        while (qdr_connection_process(conn->qdr_conn)) {}
+        while (conn->qdr_conn && qdr_connection_process(conn->qdr_conn)) {}
+
+        if (conn->write_blocked_time) {
+            if ((tcp_adaptor->core->uptime_ticks - conn->write_blocked_time) > WRITE_STALLED_TIMEOUT) {
+
+                qd_log(log, QD_LOG_INFO, "[C%"PRIu64"] Connection blocked, closing...", conn->conn_id);
+                fprintf(stdout, "tcp_adaptor %p CLOSE DUE TO STALL\n", (void*)conn);
+                pn_raw_connection_close(conn->pn_raw_conn);
+            }
+        }
+
         break;
     }
     case PN_RAW_CONNECTION_READ: {
@@ -702,9 +785,21 @@ static void handle_connection_event(pn_event_t *e, qd_server_t *qd_server, void 
                     qd_message_stream_data_release((qd_message_stream_data_t*) buffs[i].context);
                 }
             }
+
+            assert(conn->write_bufs_held >= n);
+            conn->write_bufs_held -= n;
+            qd_log(tcp_adaptor->log_source, QD_LOG_ERROR, "[C%"PRIu64"] WBL %"PRIu64" %d bufs (%zu freed)", conn->conn_id, conn->write_blocked_time, conn->write_bufs_held, n);
+
         }
         conn->last_out_time = tcp_adaptor->core->uptime_ticks;
         conn->bytes_out += written;
+        if (conn->write_bufs_held) {
+            conn->write_blocked_time = tcp_adaptor->core->uptime_ticks;
+            qd_log(tcp_adaptor->log_source, QD_LOG_ERROR, "[C%"PRIu64"] WBL UPDATE %"PRIu64" %d bufs", conn->conn_id, conn->write_blocked_time, conn->write_bufs_held);
+        } else {
+            conn->write_blocked_time = 0;
+            qd_log(tcp_adaptor->log_source, QD_LOG_ERROR, "[C%"PRIu64"] WBL CLEARED %"PRIu64" %d bufs", conn->conn_id, conn->write_blocked_time, conn->write_bufs_held);
+        }
         qd_log(log, QD_LOG_DEBUG, "[C%"PRIu64"] PN_RAW_CONNECTION_WRITTEN Wrote %zu bytes. Total written %"PRIu64" bytes", conn->conn_id, written, conn->bytes_out);
         while (qdr_connection_process(conn->qdr_conn)) {}
         break;
@@ -713,6 +808,11 @@ static void handle_connection_event(pn_event_t *e, qd_server_t *qd_server, void 
         qd_log(log, QD_LOG_DEBUG, "[C%"PRIu64"] Unexpected Event: %d", conn->conn_id, pn_event_type(e));
         break;
     }
+
+
+    qd_log(log, QD_LOG_INFO, "[C%"PRIu64"] connection event %s *END*", conn->conn_id, pn_event_type_name(pn_event_type(e)));
+
+    
 }
 
 static qdr_tcp_connection_t *qdr_tcp_connection_ingress(qd_tcp_listener_t* listener)
@@ -725,9 +825,12 @@ static qdr_tcp_connection_t *qdr_tcp_connection_ingress(qd_tcp_listener_t* liste
     tc->context.handler = &handle_connection_event;
     tc->config = listener->config;
     tc->server = listener->server;
+    tc->poll_timer = qd_timer(tcp_adaptor->core->qd, on_poll, tc);
     sys_atomic_init(&tc->q2_restart, 0);
     tc->pn_raw_conn = pn_raw_connection();
     pn_raw_connection_set_context(tc->pn_raw_conn, tc);
+    qd_timer_schedule(tc->poll_timer, POLL_INTERVAL);
+
     //the following call will cause a PN_RAW_CONNECTION_CONNECTED
     //event on another thread, which is where the rest of the
     //initialisation will happen, through a call to
@@ -814,6 +917,7 @@ static qdr_tcp_connection_t *qdr_tcp_connection_egress(qd_bridge_config_t *confi
         tc->activate_timer = qd_timer(tcp_adaptor->core->qd, on_activate, tc);
         tc->egress_dispatcher = true;
     }
+    tc->poll_timer = qd_timer(tcp_adaptor->core->qd, on_poll, tc);
     tc->ingress = false;
     tc->context.context = tc;
     tc->context.handler = &handle_connection_event;
@@ -833,6 +937,7 @@ static qdr_tcp_connection_t *qdr_tcp_connection_egress(qd_bridge_config_t *confi
         qd_log(tcp_adaptor->log_source, QD_LOG_INFO, "[C%"PRIu64"] Connecting to: %s", tc->conn_id, tc->config.host_port);
         tc->pn_raw_conn = pn_raw_connection();
         pn_raw_connection_set_context(tc->pn_raw_conn, tc);
+        qd_timer_schedule(tc->poll_timer, POLL_INTERVAL);
         pn_proactor_raw_connect(qd_server_proactor(tc->server), tc->pn_raw_conn, tc->config.host_port);
     }
 
