@@ -30,7 +30,7 @@ jobs:
       matrix:
         os: [ubuntu-20.04]
         buildType: [RelWithDebInfo]
-        runtimeCheck: [asan]
+        runtimeCheck: [asan, tsan]
     env:
       BuildType: ${{matrix.buildType}}
       ProtonBuildDir: ${{github.workspace}}/qpid-proton/build
@@ -173,7 +173,7 @@ jobs:
       matrix:
         os: [ubuntu-20.04]
         buildType: [RelWithDebInfo]
-        runtimeCheck: [asan]
+        runtimeCheck: [asan, tsan]
         shard: [1, 2]
         shards: [2]
     env:
