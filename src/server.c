@@ -1110,6 +1110,9 @@ static bool handle(qd_server_t *qd_server, pn_event_t *e, pn_connection_t *pn_co
     return true;
 }
 
+uint64_t kag_rx_count;
+uint64_t kag_tx_count;
+
 static void *thread_run(void *arg)
 {
     qd_server_t      *qd_server = (qd_server_t*)arg;
@@ -1149,6 +1152,17 @@ static void *thread_run(void *arg)
             qd_conn_event_batch_complete(qd_server->container, qd_conn, false);
 
         pn_proactor_done(qd_server->proactor, events);
+        if (kag_rx_count || kag_tx_count) {
+            if (qd_conn) {
+                if (qd_conn->connection_id == 1 && kag_tx_count) {
+                    fprintf(stdout, "[C%"PRIu64"]: tx:%"PRIu64"\n", qd_conn->connection_id, kag_tx_count);
+                    kag_tx_count = 0;
+                } else if (qd_conn->connection_id == 2 && kag_rx_count) {
+                    fprintf(stdout, "[C%"PRIu64"]: tx:%"PRIu64"\n", qd_conn->connection_id, kag_rx_count);
+                    kag_rx_count = 0;
+                }
+            }
+        }
     }
     return NULL;
 }

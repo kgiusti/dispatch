@@ -728,7 +728,7 @@ static void qdr_link_forward_CT(qdr_core_t *core, qdr_link_t *link, qdr_delivery
     }
 }
 
-
+extern uint64_t kag_core_count;
 static void qdr_link_deliver_CT(qdr_core_t *core, qdr_action_t *action, bool discard)
 {
     if (discard)
@@ -743,6 +743,7 @@ static void qdr_link_deliver_CT(qdr_core_t *core, qdr_action_t *action, bool dis
     if (link->conn)
         link->conn->last_delivery_time = core->uptime_ticks;
 
+    kag_core_count += 1;
     link->total_deliveries++;
 
     if (link->link_type == QD_LINK_ENDPOINT && !link->fallback)

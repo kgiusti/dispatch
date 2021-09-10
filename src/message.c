@@ -1486,6 +1486,8 @@ bool qd_message_has_data_in_content_or_pending_buffers(qd_message_t   *msg)
 }
 
 
+extern uint64_t kag_rx_count;
+extern uint64_t kag_tx_count;
 qd_message_t *qd_message_receive(pn_delivery_t *delivery)
 {
     pn_link_t        *link = pn_delivery_link(delivery);
@@ -1569,6 +1571,7 @@ qd_message_t *qd_message_receive(pn_delivery_t *delivery)
                 }
 
                 content->receive_complete = true;
+                kag_rx_count += 1;
                 content->q2_unblocker.handler = 0;
                 qd_nullify_safe_ptr(&content->q2_unblocker.context);
                 if (pn_delivery_aborted(delivery)) {
@@ -2000,7 +2003,10 @@ void qd_message_send(qd_message_t *in_msg,
                     msg->cursor.buffer = next_buf;
                     msg->cursor.cursor = (next_buf) ? qd_buffer_base(next_buf) : 0;
 
-                    SET_ATOMIC_BOOL(&msg->send_complete, (complete && !next_buf));
+                    if (complete && !next_buf) {
+                        kag_tx_count += 1;
+                        SET_ATOMIC_BOOL(&msg->send_complete, true);
+                    }
                 }
 
                 buf = next_buf;

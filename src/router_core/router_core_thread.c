@@ -80,15 +80,20 @@ void qdr_register_adaptor(const char *name, qdr_adaptor_init_t on_init, qdr_adap
 }
 
 
-static void qdr_activate_connections_CT(qdr_core_t *core)
+static int qdr_activate_connections_CT(qdr_core_t *core)
 {
+    int count = 0;
     qdr_connection_t *conn = DEQ_HEAD(core->connections_to_activate);
     while (conn) {
         DEQ_REMOVE_HEAD_N(ACTIVATE, core->connections_to_activate);
         conn->in_activate_list = false;
         conn->protocol_adaptor->activate_handler(conn->protocol_adaptor->user_context, conn);
+        if (conn->identity == 1)
+            count += 1;
         conn = DEQ_HEAD(core->connections_to_activate);
     }
+
+    return count;
 }
 
 
@@ -174,12 +179,17 @@ void qdr_adaptors_finalize(qdr_core_t *core)
 }
 
 
+uint64_t kag_core_count;
+
 void *router_core_thread(void *arg)
 {
     qdr_core_t        *core = (qdr_core_t*) arg;
     qdr_action_list_t  action_list = DEQ_EMPTY;
     qdr_action_t      *bg_action = 0;
 
+    uint64_t core_sleepy = 0;
+    bool core_slept = false;
+    
     qd_log(core->log, QD_LOG_INFO, "Router Core thread running. %s/%s", core->router_area, core->router_id);
     while (core->running) {
         //
@@ -208,11 +218,17 @@ void *router_core_thread(void *arg)
             // Block on the condition variable when there is no action to do
             //
             core->sleeping = true;
+            core_slept = true;
             sys_cond_wait(core->action_cond, core->action_lock);
             core->sleeping = false;
         }
 
         sys_mutex_unlock(core->action_lock);
+        if (core_sleepy && core_slept) {
+            fprintf(stdout, "Core-sleep: %"PRIu64"\n", core_sleepy);
+            core_sleepy = 0;
+        }
+        core_slept = false;
 
         // bg_action is set only when there are no other actions pending
         //
@@ -241,7 +257,14 @@ void *router_core_thread(void *arg)
         //
         // Activate all connections that were flagged for activation during the above processing
         //
-        qdr_activate_connections_CT(core);
+        if (qdr_activate_connections_CT(core)) {
+            if (kag_core_count) {
+                fprintf(stdout, "Core: %"PRIu64"\n", kag_core_count);
+                core_sleepy += kag_core_count;
+                kag_core_count = 0;
+            }
+        }
+
 
         //
         // Schedule the cleanup of deliveries freed during this core-thread pass

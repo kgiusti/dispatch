@@ -481,6 +481,11 @@ void qd_conn_event_batch_complete(qd_container_t *container, qd_connection_t *qd
         to_free = DEQ_HEAD(qd_conn->free_link_session_list);
 
     }
+
+    // UNCOMMENT ME FOR EXTRA END-OF-BATCH POLL:
+    //if (!qd_conn->closed)
+    //    writable_handler(container, qd_conn->pn_conn, qd_conn);
+    
 }
 
 
