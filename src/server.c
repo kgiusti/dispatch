@@ -1158,7 +1158,7 @@ static void *thread_run(void *arg)
                     fprintf(stdout, "[C%"PRIu64"]: tx:%"PRIu64"\n", qd_conn->connection_id, kag_tx_count);
                     kag_tx_count = 0;
                 } else if (qd_conn->connection_id == 2 && kag_rx_count) {
-                    fprintf(stdout, "[C%"PRIu64"]: tx:%"PRIu64"\n", qd_conn->connection_id, kag_rx_count);
+                    fprintf(stdout, "[C%"PRIu64"]: rx:%"PRIu64"\n", qd_conn->connection_id, kag_rx_count);
                     kag_rx_count = 0;
                 }
             }

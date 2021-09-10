@@ -483,8 +483,8 @@ void qd_conn_event_batch_complete(qd_container_t *container, qd_connection_t *qd
     }
 
     // UNCOMMENT ME FOR EXTRA END-OF-BATCH POLL:
-    //if (!qd_conn->closed)
-    //    writable_handler(container, qd_conn->pn_conn, qd_conn);
+    if (!qd_conn->closed)
+        writable_handler(container, qd_conn->pn_conn, qd_conn);
     
 }
 
