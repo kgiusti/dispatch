@@ -650,6 +650,7 @@ static bool AMQP_rx_handler(void* context, qd_link_t *link)
         qd_link_set_incoming_msg(link, (qd_message_t*) 0);  // msg no longer exclusive to qd_link
         qdr_node_connect_deliveries(link, delivery, pnd);
         qdr_delivery_decref(router->router_core, delivery, "release protection of return from deliver_to_routed_link");
+        qd_connection_rx_inc(conn);
         return next_delivery;
     }
 
@@ -887,6 +888,8 @@ static bool AMQP_rx_handler(void* context, qd_link_t *link)
         qd_link_set_incoming_msg(link, (qd_message_t*) 0);  // msg no longer exclusive to qd_link
         qdr_node_connect_deliveries(link, delivery, pnd);
         qdr_delivery_decref(router->router_core, delivery, "release protection of return from deliver");
+        qd_connection_rx_inc(conn);
+
     } else {
         //
         // If there is no delivery, the message is now and will always be unroutable because there is no address.
@@ -1980,6 +1983,7 @@ static uint64_t CORE_link_deliver(void *context, qdr_link_t *link, qdr_delivery_
             qdr_node_connect_deliveries(qlink, dlv, pdlv);
 
         qdr_delivery_set_tag_sent(dlv, true);
+        qd_connection_tx_inc(qconn);
     } else {
         pdlv = qdr_node_delivery_pn_from_qdr(dlv);
     }

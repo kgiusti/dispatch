@@ -1490,7 +1490,6 @@ qd_message_t *qd_message_receive(pn_delivery_t *delivery)
 {
     pn_link_t        *link = pn_delivery_link(delivery);
     qd_link_t       *qdl = (qd_link_t *)pn_link_get_context(link);
-    qd_connection_t *qdc = qd_link_connection(qdl);
     ssize_t           rc;
 
     pn_record_t *record    = pn_delivery_attachments(delivery);
@@ -1503,6 +1502,7 @@ qd_message_t *qd_message_receive(pn_delivery_t *delivery)
     //
     if (!msg) {
         msg = (qd_message_pvt_t*) qd_message();
+        qd_connection_t *qdc = qd_link_connection(qdl);
         qd_alloc_safe_ptr_t sp = QD_SAFE_PTR_INIT(qdl);
         qd_message_set_q2_unblocked_handler((qd_message_t*) msg, qd_link_q2_restart_receive, sp);
         msg->strip_annotations_in  = qd_connection_strip_annotations_in(qdc);
@@ -1569,7 +1569,6 @@ qd_message_t *qd_message_receive(pn_delivery_t *delivery)
                 }
 
                 content->receive_complete = true;
-                qd_connection_rx_inc(qdc);
                 content->q2_unblocker.handler = 0;
                 qd_nullify_safe_ptr(&content->q2_unblocker.context);
                 if (pn_delivery_aborted(delivery)) {
@@ -1813,7 +1812,6 @@ void qd_message_send(qd_message_t *in_msg,
     qd_message_content_t *content = msg->content;
     qd_buffer_t          *buf     = 0;
     pn_link_t            *pnl     = qd_link_pn(link);
-    qd_connection_t      *qdc     = qd_link_connection(link);
 
     *q3_stalled                   = false;
 
@@ -2002,10 +2000,7 @@ void qd_message_send(qd_message_t *in_msg,
                     msg->cursor.buffer = next_buf;
                     msg->cursor.cursor = (next_buf) ? qd_buffer_base(next_buf) : 0;
 
-                    if (complete && !next_buf) {
-                        qd_connection_tx_inc(qdc);
-                        SET_ATOMIC_BOOL(&msg->send_complete, true);
-                    }
+                    SET_ATOMIC_BOOL(&msg->send_complete, (complete && !next_buf));
                 }
 
                 buf = next_buf;

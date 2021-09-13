@@ -1120,8 +1120,11 @@ static void *thread_run(void *arg)
         pn_event_t * e;
         qd_connection_t *qd_conn = 0;
         pn_connection_t *pn_conn = 0;
+        int batch_len = 0;
+        int wake_ct = 0;
 
         while (running && (e = pn_event_batch_next(events))) {
+            batch_len += 1;
             pn_connection_t *conn = pn_event_connection(e);
 
             if (!pn_conn)
@@ -1140,6 +1143,8 @@ static void *thread_run(void *arg)
                 qd_connection_free(qd_conn);
                 qd_conn = 0;
             }
+
+            if (pn_event_type(e) == PN_CONNECTION_WAKE) wake_ct += 1;
         }
 
         //
@@ -1152,8 +1157,8 @@ static void *thread_run(void *arg)
         pn_proactor_done(qd_server->proactor, events);
         if (qd_conn) {
             if (qd_conn->tx_count || qd_conn->rx_count) {
-                fprintf(stdout, "[C%"PRIu64"]: tx:%"PRIu64" \trx:%"PRIu64"\n",
-                        qd_conn->connection_id, qd_conn->tx_count, qd_conn->rx_count);
+                fprintf(stdout, "[C%"PRIu64"]: tx:%"PRIu64" \trx:%"PRIu64" \t%d events (%d wakes)\n",
+                        qd_conn->connection_id, qd_conn->tx_count, qd_conn->rx_count, batch_len, wake_ct);
                 qd_conn->tx_count = qd_conn->rx_count = 0;
             }
         }
