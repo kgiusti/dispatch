@@ -632,6 +632,10 @@ void qd_connection_wake(qd_connection_t *ctx);
 
 uint64_t qd_connection_max_message_size(const qd_connection_t *c);
 
+void qd_connection_rx_inc(qd_connection_t *c);
+void qd_connection_tx_inc(qd_connection_t *c);
+
+
 /**
  * @}
  */

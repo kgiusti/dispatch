@@ -189,6 +189,8 @@ struct qd_connection_t {
     void (*wake)(qd_connection_t*); /* Wake method, different for HTTP vs. proactor */
     char rhost[NI_MAXHOST];     /* Remote host numeric IP for incoming connections */
     char rhost_port[NI_MAXHOST+NI_MAXSERV]; /* Remote host:port for incoming connections */
+    uint64_t rx_count;
+    uint64_t tx_count;
 };
 
 DEQ_DECLARE(qd_connection_t, qd_connection_list_t);

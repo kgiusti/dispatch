@@ -1110,8 +1110,6 @@ static bool handle(qd_server_t *qd_server, pn_event_t *e, pn_connection_t *pn_co
     return true;
 }
 
-uint64_t kag_rx_count;
-uint64_t kag_tx_count;
 
 static void *thread_run(void *arg)
 {
@@ -1152,15 +1150,11 @@ static void *thread_run(void *arg)
             qd_conn_event_batch_complete(qd_server->container, qd_conn, false);
 
         pn_proactor_done(qd_server->proactor, events);
-        if (kag_rx_count || kag_tx_count) {
-            if (qd_conn) {
-                if (qd_conn->connection_id == 1 && kag_tx_count) {
-                    fprintf(stdout, "[C%"PRIu64"]: tx:%"PRIu64"\n", qd_conn->connection_id, kag_tx_count);
-                    kag_tx_count = 0;
-                } else if (qd_conn->connection_id == 2 && kag_rx_count) {
-                    fprintf(stdout, "[C%"PRIu64"]: rx:%"PRIu64"\n", qd_conn->connection_id, kag_rx_count);
-                    kag_rx_count = 0;
-                }
+        if (qd_conn) {
+            if (qd_conn->tx_count || qd_conn->rx_count) {
+                fprintf(stdout, "[C%"PRIu64"]: tx:%"PRIu64" \trx:%"PRIu64"\n",
+                        qd_conn->connection_id, qd_conn->tx_count, qd_conn->rx_count);
+                qd_conn->tx_count = qd_conn->rx_count = 0;
             }
         }
     }
@@ -1867,4 +1861,13 @@ sys_mutex_t *qd_server_get_activation_lock(qd_server_t * server)
 
 uint64_t qd_connection_max_message_size(const qd_connection_t *c) {
     return (c && c->policy_settings) ? c->policy_settings->spec.maxMessageSize : 0;
+}
+
+void qd_connection_rx_inc(qd_connection_t *c)
+{
+    c->rx_count += 1;
+}
+void qd_connection_tx_inc(qd_connection_t *c)
+{
+    c->tx_count += 1;
 }
