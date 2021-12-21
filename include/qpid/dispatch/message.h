@@ -196,13 +196,18 @@ void qd_message_set_phase_annotation(qd_message_t *msg, int phase);
 int  qd_message_get_phase_annotation(const qd_message_t *msg);
 
 /**
- * Indicate whether message should be considered to be streaming.
+ * Classify the message as streaming.
+ *
+ * Marking a message as streaming will prevent downstream routers from manually
+ * determining if this message should be sent on an inter-router streaming
+ * link. Once a message is classified as streaming it retains the
+ * classification until it is delivered to an endpoint
  *
  * @param msg Pointer to an outgoing message.
- * @param stream true if the message is streaming
  *
  */
-void qd_message_set_stream_annotation(qd_message_t *msg, bool stream);
+void qd_message_set_streaming_annotation(qd_message_t *msg);
+
 /**
  * Test whether received message should be considered to be streaming.
  *
@@ -210,7 +215,7 @@ void qd_message_set_stream_annotation(qd_message_t *msg, bool stream);
  * @return true if the received message has the streaming annotation set, else false.
  *
  */
-int qd_message_is_streaming(qd_message_t *msg);
+int qd_message_is_streaming(const qd_message_t *msg);
 
 /**
  * Prevent the router from doing any transformations to the message annotations
