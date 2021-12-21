@@ -125,11 +125,10 @@ typedef struct {
     uint32_t             ma_count;                        // Number of map elements in blob
                                                           //  after router fields stripped
     qd_parsed_field_t   *ma_pf_ingress;
-    qd_parsed_field_t   *ma_pf_phase;
     qd_parsed_field_t   *ma_pf_to_override;
     qd_parsed_field_t   *ma_pf_trace;
-    int                  ma_int_phase;
     sys_atomic_t         ma_stream;                      // Message is streaming
+
     uint64_t             max_message_size;               // Configured max; 0 if no max to enforce
     uint64_t             bytes_received;                 // Bytes returned by pn_link_recv()
                                                          //  when enforcing max_message_size

@@ -1100,8 +1100,6 @@ void qd_message_free(qd_message_t *in_msg)
             qd_iterator_free(content->ma_field_iter_in);
         if (content->ma_pf_ingress)
             qd_parse_free(content->ma_pf_ingress);
-        if (content->ma_pf_phase)
-            qd_parse_free(content->ma_pf_phase);
         if (content->ma_pf_to_override)
             qd_parse_free(content->ma_pf_to_override);
         if (content->ma_pf_trace)
@@ -1179,10 +1177,11 @@ const char *qd_message_message_annotations(qd_message_t *in_msg)
         return 0;
 
     qd_parsed_field_t *ma_pf_stream = 0;
+    qd_parsed_field_t *ma_pf_phase = 0;
     const char *err = qd_parse_annotations(msg->strip_annotations_in,
                                            content->ma_field_iter_in,
                                            &content->ma_pf_ingress,
-                                           &content->ma_pf_phase,
+                                           &ma_pf_phase,
                                            &content->ma_pf_to_override,
                                            &content->ma_pf_trace,
                                            &ma_pf_stream,
@@ -1203,8 +1202,9 @@ const char *qd_message_message_annotations(qd_message_t *in_msg)
     }
 
     // extract phase
-    if (content->ma_pf_phase) {
-        content->ma_int_phase = qd_parse_as_int(content->ma_pf_phase);
+    if (ma_pf_phase) {
+        msg->ma_phase = qd_parse_as_int(ma_pf_phase);
+        qd_parse_free(ma_pf_phase);
     }
 
     if (ma_pf_stream) {
@@ -2926,12 +2926,6 @@ qd_parsed_field_t *qd_message_get_ingress(qd_message_t *msg)
 }
 
 
-qd_parsed_field_t *qd_message_get_phase(qd_message_t *msg)
-{
-    return ((qd_message_pvt_t*) msg)->content->ma_pf_phase;
-}
-
-
 qd_parsed_field_t *qd_message_get_to_override(qd_message_t *msg)
 {
     return ((qd_message_pvt_t*)msg)->content->ma_pf_to_override;
@@ -2943,11 +2937,6 @@ qd_parsed_field_t *qd_message_get_trace(qd_message_t *msg)
     return ((qd_message_pvt_t*) msg)->content->ma_pf_trace;
 }
 
-
-int qd_message_get_phase_val(qd_message_t *msg)
-{
-    return ((qd_message_pvt_t*) msg)->content->ma_int_phase;
-}
 
 int qd_message_is_streaming(qd_message_t *msg)
 {
