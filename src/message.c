@@ -1043,7 +1043,7 @@ void qd_message_free(qd_message_t *in_msg)
     qd_message_pvt_t          *msg        = (qd_message_pvt_t*) in_msg;
     qd_message_q2_unblocker_t  q2_unblock = {0};
 
-    qd_buffer_list_free_buffers(&msg->ma_to_override);
+    free(msg->ma_to_override);
     qd_buffer_list_free_buffers(&msg->ma_trace);
     qd_buffer_list_free_buffers(&msg->ma_ingress);
 
@@ -1148,7 +1148,8 @@ qd_message_t *qd_message_copy(qd_message_t *in_msg)
     copy->is_fanout     = false;
 
     if (!content->ma_disabled) {
-        qd_buffer_list_clone(&copy->ma_to_override, &msg->ma_to_override);
+        if (msg->ma_to_override)
+            copy->ma_to_override = qd_strdup(msg->ma_to_override);
         qd_buffer_list_clone(&copy->ma_trace, &msg->ma_trace);
         qd_buffer_list_clone(&copy->ma_ingress, &msg->ma_ingress);
         copy->ma_phase = msg->ma_phase;
@@ -1200,7 +1201,8 @@ const char *qd_message_message_annotations(qd_message_t *in_msg)
         cf->parsed = true;
     }
 
-    // extract phase
+    // cache incoming values into the message
+
     if (ma_pf_phase) {
         msg->ma_phase = qd_parse_as_int(ma_pf_phase);
         qd_parse_free(ma_pf_phase);
@@ -1209,6 +1211,10 @@ const char *qd_message_message_annotations(qd_message_t *in_msg)
     if (ma_pf_stream) {
         msg->ma_streaming = true;
         qd_parse_free(ma_pf_stream);
+    }
+
+    if (content->ma_pf_to_override) {
+        msg->ma_to_override = qd_parse_as_string(content->ma_pf_to_override);
     }
 
     return 0;
@@ -1223,12 +1229,11 @@ void qd_message_set_trace_annotation(qd_message_t *in_msg, qd_composed_field_t *
     qd_compose_free(trace_field);
 }
 
-void qd_message_set_to_override_annotation(qd_message_t *in_msg, qd_composed_field_t *to_field)
+void qd_message_set_to_override_annotation(qd_message_t *in_msg, char *to_field)
 {
     qd_message_pvt_t *msg = (qd_message_pvt_t*) in_msg;
-    qd_buffer_list_free_buffers(&msg->ma_to_override);
-    qd_compose_take_buffers(to_field, &msg->ma_to_override);
-    qd_compose_free(to_field);
+    free(msg->ma_to_override);
+    msg->ma_to_override = to_field;
 }
 
 void qd_message_set_phase_annotation(qd_message_t *in_msg, int phase)
@@ -1719,7 +1724,7 @@ static void compose_message_annotations_v1(qd_message_pvt_t *msg, qd_buffer_list
         return;
 
     // add dispatch router specific annotations if any are defined
-    if (!DEQ_IS_EMPTY(msg->ma_to_override) ||
+    if (msg->ma_to_override ||
         !DEQ_IS_EMPTY(msg->ma_trace) ||
         !DEQ_IS_EMPTY(msg->ma_ingress) ||
         msg->ma_phase != 0 ||
@@ -1730,9 +1735,9 @@ static void compose_message_annotations_v1(qd_message_pvt_t *msg, qd_buffer_list
             map_started = true;
         }
 
-        if (!DEQ_IS_EMPTY(msg->ma_to_override)) {
+        if (msg->ma_to_override) {
             qd_compose_insert_symbol(field, QD_MA_TO);
-            qd_compose_insert_buffers(field, &msg->ma_to_override);
+            qd_compose_insert_string(field, msg->ma_to_override);
             field_count++;
         }
 

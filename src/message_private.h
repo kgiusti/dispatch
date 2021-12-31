@@ -157,9 +157,9 @@ struct qd_message_pvt_t {
     qd_message_depth_t             sent_depth;      // Depth of outgoing sent message
     qd_message_content_t          *content;         // Singleton content shared by reference between
                                                     //  incoming and all outgoing copies
-    qd_buffer_list_t               ma_to_override;  // To field in outgoing message annotations.
     qd_buffer_list_t               ma_trace;        // Trace list in outgoing message annotations
     qd_buffer_list_t               ma_ingress;      // Ingress field in outgoing message annotations
+    char                          *ma_to_override;  // new outgoing value for to-override MA
     int                            ma_phase;        // Phase for override address
     bool                           ma_streaming;    // Do not attempt to wait for entire msg to arrive.
     qd_message_stream_data_list_t  stream_data_list;// Stream data parse structure

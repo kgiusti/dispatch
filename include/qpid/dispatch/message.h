@@ -177,13 +177,13 @@ void qd_message_set_trace_annotation(qd_message_t *msg, qd_composed_field_t *tra
  * method must not reference it after this call.
  *
  * @param msg Pointer to an outgoing message.
- * @param to_field Pointer to a composed field representing the to override
- * address that will be used as the value for the QD_MA_TO map entry.  If null,
- * the message will not have a QA_MA_TO message annotation field.  Ownership of
- * this field is transferred to the message.
+ * @param to_field Pointer to a c string holding the to override address that
+ * will be used as the value for the outgoing QD_MA_TO annotations map entry.
+ * If null, the message will not have a QA_MA_TO message annotation field.
+ * Ownership of this field is transferred to the message.
  *
  */
-void qd_message_set_to_override_annotation(qd_message_t *msg, qd_composed_field_t *to_field);
+void qd_message_set_to_override_annotation(qd_message_t *msg, char *to_field);
 
 /**
  * Set a phase for the phase annotation in the message.
@@ -465,7 +465,7 @@ qd_log_source_t* qd_message_log_source();
 
 /**
  * Accessor for message field ingress
- * 
+ *
  * @param msg A pointer to the message
  * @return the parsed field
  */
