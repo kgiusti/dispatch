@@ -109,8 +109,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                and 'chunked' in value.lower():
                 body = b''
                 while True:
-                    header = self.rfile.readline().strip().split(b';')[0]
-                    hlen = int(header, base=16)
+                    chunk_header = self.rfile.readline()
+                    try:
+                        hlen = int(chunk_header.strip().split(b';')[0],
+                                   base=16)
+                    except ValueError as exc:
+                        # DISPATCH-2303: why did this fail?
+                        print("Chunk header length decode failed: %s: %s"
+                              % (exc, str(chunk_header)), flush=True)
+                        raise
                     if hlen > 0:
                         data = self.rfile.read(hlen + 2)  # 2 = \r\n
                         body += data[:-2]
