@@ -42,7 +42,6 @@
 #include <string.h>
 #include <time.h>
 
- #define CHECK_Q2(blist) assert(DEQ_SIZE(blist) <= QD_QLIMIT_Q2_LOWER)
 
 #define LOCK   sys_mutex_lock
 #define UNLOCK sys_mutex_unlock
@@ -2341,68 +2340,7 @@ ssize_t qd_message_field_copy(qd_message_t *msg, qd_message_field_t field, char 
 }
 
 
-void qd_message_compose_1(qd_message_t *msg, const char *to, qd_buffer_list_t *buffers)
-{
-    qd_composed_field_t  *field   = qd_compose(QD_PERFORMATIVE_HEADER, 0);
-    qd_message_content_t *content = MSG_CONTENT(msg);
-    SET_ATOMIC_FLAG(&content->receive_complete);
-
-    qd_compose_start_list(field);
-    qd_compose_insert_bool(field, 0);     // durable
-    qd_compose_insert_null(field);        // priority
-    //qd_compose_insert_null(field);        // ttl
-    //qd_compose_insert_boolean(field, 0);  // first-acquirer
-    //qd_compose_insert_uint(field, 0);     // delivery-count
-    qd_compose_end_list(field);
-
-    qd_buffer_list_t out_ma;
-    qd_buffer_list_t out_ma_trailer;
-    DEQ_INIT(out_ma);
-    DEQ_INIT(out_ma_trailer);
-    compose_message_annotations((qd_message_pvt_t*)msg, &out_ma, &out_ma_trailer, false);
-    qd_compose_insert_buffers(field, &out_ma);
-    // TODO: user annotation blob goes here
-    qd_compose_insert_buffers(field, &out_ma_trailer);
-
-    field = qd_compose(QD_PERFORMATIVE_PROPERTIES, field);
-    qd_compose_start_list(field);
-    qd_compose_insert_null(field);          // message-id
-    qd_compose_insert_null(field);          // user-id
-    qd_compose_insert_string(field, to);    // to
-    //qd_compose_insert_null(field);          // subject
-    //qd_compose_insert_null(field);          // reply-to
-    //qd_compose_insert_null(field);          // correlation-id
-    //qd_compose_insert_null(field);          // content-type
-    //qd_compose_insert_null(field);          // content-encoding
-    //qd_compose_insert_timestamp(field, 0);  // absolute-expiry-time
-    //qd_compose_insert_timestamp(field, 0);  // creation-time
-    //qd_compose_insert_null(field);          // group-id
-    //qd_compose_insert_uint(field, 0);       // group-sequence
-    //qd_compose_insert_null(field);          // reply-to-group-id
-    qd_compose_end_list(field);
-
-    if (buffers) {
-        field = qd_compose(QD_PERFORMATIVE_BODY_DATA, field);
-        qd_compose_insert_binary_buffers(field, buffers);
-    }
-
-    qd_compose_take_buffers(field, &content->buffers);
-    qd_compose_free(field);
-}
-
-
-void qd_message_compose_2(qd_message_t *msg, qd_composed_field_t *field, bool complete)
-{
-    qd_message_content_t *content       = MSG_CONTENT(msg);
-    qd_buffer_list_t     *field_buffers = qd_compose_buffers(field);
-
-    content->buffers          = *field_buffers;
-    SET_ATOMIC_BOOL(&content->receive_complete, complete);
-
-    DEQ_INIT(*field_buffers); // Zero out the linkage to the now moved buffers.
-}
-
-
+// deprecated - use qd_message_compose() for creating locally generated messages
 void qd_message_compose_3(qd_message_t *msg, qd_composed_field_t *field1, qd_composed_field_t *field2, bool receive_complete)
 {
     qd_message_content_t *content        = MSG_CONTENT(msg);
@@ -2413,44 +2351,47 @@ void qd_message_compose_3(qd_message_t *msg, qd_composed_field_t *field1, qd_com
     content->buffers = *field1_buffers;
     DEQ_INIT(*field1_buffers);
     DEQ_APPEND(content->buffers, (*field2_buffers));
+
+    // set up the locations of the message headers sent prior to the message
+    // annotations section.  This is used when composing outgoing router
+    // annotations:
+    qd_message_message_annotations(msg);
+
+    // initialize the Q2 flag:
+    if (_Q2_holdoff_should_block_LH(content))
+        content->q2_input_holdoff = true;
 }
 
 
-void qd_message_compose_4(qd_message_t *msg, qd_composed_field_t *field1, qd_composed_field_t *field2, qd_composed_field_t *field3, bool receive_complete)
+qd_message_t *qd_message_compose(qd_composed_field_t *f1,
+                                 qd_composed_field_t *f2,
+                                 qd_composed_field_t *f3,
+                                 bool receive_complete)
 {
-    qd_message_content_t *content        = MSG_CONTENT(msg);
+    qd_message_t *msg = qd_message();
+    if (!msg)
+        return 0;
+
+    qd_composed_field_t *fields[4] = {f1, f2, f3, 0};
+    qd_message_content_t *content = MSG_CONTENT(msg);
     SET_ATOMIC_BOOL(&content->receive_complete, receive_complete);
-    qd_buffer_list_t     *field1_buffers = qd_compose_buffers(field1);
-    CHECK_Q2(*field1_buffers);
-    qd_buffer_list_t     *field2_buffers = qd_compose_buffers(field2);
-    CHECK_Q2(*field2_buffers);
-    qd_buffer_list_t     *field3_buffers = qd_compose_buffers(field3);
-    CHECK_Q2(*field3_buffers);
 
-    content->buffers = *field1_buffers;
-    DEQ_INIT(*field1_buffers);
-    DEQ_APPEND(content->buffers, (*field2_buffers));
-    DEQ_APPEND(content->buffers, (*field3_buffers));
-}
+    for (int idx = 0; fields[idx] != 0; ++idx) {
+        qd_buffer_list_t *bufs = qd_compose_buffers(fields[idx]);
+        DEQ_APPEND(content->buffers, (*bufs));
+        qd_compose_free(fields[idx]);
+    }
 
-void qd_message_compose_5(qd_message_t *msg, qd_composed_field_t *field1, qd_composed_field_t *field2, qd_composed_field_t *field3, qd_composed_field_t *field4, bool receive_complete)
-{
-    qd_message_content_t *content        = MSG_CONTENT(msg);
-    SET_ATOMIC_BOOL(&content->receive_complete, receive_complete);
-    qd_buffer_list_t     *field1_buffers = qd_compose_buffers(field1);
-    CHECK_Q2(*field1_buffers);
-    qd_buffer_list_t     *field2_buffers = qd_compose_buffers(field2);
-    CHECK_Q2(*field2_buffers);
-    qd_buffer_list_t     *field3_buffers = qd_compose_buffers(field3);
-    CHECK_Q2(*field3_buffers);
-    qd_buffer_list_t     *field4_buffers = qd_compose_buffers(field4);
-    CHECK_Q2(*field4_buffers);
-    content->buffers = *field1_buffers;
-    DEQ_INIT(*field1_buffers);
-    DEQ_APPEND(content->buffers, (*field2_buffers));
-    DEQ_APPEND(content->buffers, (*field3_buffers));
-    DEQ_APPEND(content->buffers, (*field4_buffers));
+    // set up the locations of the message headers sent prior to the message
+    // annotations section.  This is used when composing outgoing router
+    // annotations:
+    qd_message_message_annotations(msg);
 
+    // initialize the Q2 flag:
+    if (_Q2_holdoff_should_block_LH(content))
+        content->q2_input_holdoff = true;
+
+    return msg;
 }
 
 

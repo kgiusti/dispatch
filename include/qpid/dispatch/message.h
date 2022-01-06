@@ -307,16 +307,27 @@ qd_iterator_t *qd_message_field_iterator(qd_message_t *msg, qd_message_field_t f
 ssize_t qd_message_field_length(qd_message_t *msg, qd_message_field_t field);
 ssize_t qd_message_field_copy(qd_message_t *msg, qd_message_field_t field, char *buffer, size_t *hdr_length);
 
+// Create a message using composed fields to supply content.
 //
-// Functions for composed messages
+// This message constructor will create a new message using each fields buffers
+// concatenated in order (f1 first, f2 second, etc). There is no need to
+// provide all three fields: concatenation stops at the first null fx pointer.
 //
+// Note well that while this constructor can support up to three separate
+// composed fields it is more efficent to chain as many message sections as
+// possible into as few separate composed fields as possible.  This means that
+// any passed composed field can contain several message sections.
+//
+// This constructor takes ownership of the composed fields - the caller must
+// not reference them after the call.
+//
+qd_message_t *qd_message_compose(qd_composed_field_t *f1,
+                                 qd_composed_field_t *f2,
+                                 qd_composed_field_t *f3,
+                                 bool receive_complete);
 
-// Convenience Functions
-void qd_message_compose_1(qd_message_t *msg, const char *to, qd_buffer_list_t *buffers);
-void qd_message_compose_2(qd_message_t *msg, qd_composed_field_t *content, bool receive_complete);
-void qd_message_compose_3(qd_message_t *msg, qd_composed_field_t *content1, qd_composed_field_t *content2, bool receive_complete);
-void qd_message_compose_4(qd_message_t *msg, qd_composed_field_t *content1, qd_composed_field_t *content2, qd_composed_field_t *content3, bool receive_complete);
-void qd_message_compose_5(qd_message_t *msg, qd_composed_field_t *field1, qd_composed_field_t *field2, qd_composed_field_t *field3, qd_composed_field_t *field4, bool receive_complete);
+// deprecated: use qd_message_compose() to create locally generated messages
+void qd_message_compose_3(qd_message_t *msg, qd_composed_field_t *field1, qd_composed_field_t *field2, bool receive_complete);
 
 /**
  * qd_message_extend

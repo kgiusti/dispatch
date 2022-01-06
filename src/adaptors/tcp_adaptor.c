@@ -326,10 +326,6 @@ static int handle_incoming(qdr_tcp_connection_t *conn, const char *msg)
 
     // Ensure existence of ingress stream message
     if (!conn->instream) {
-        qd_message_t *msg = qd_message();
-
-        qd_message_set_streaming_annotation(msg);
-
         qd_composed_field_t *props = qd_compose(QD_PERFORMATIVE_PROPERTIES, 0);
         qd_compose_start_list(props);
         qd_compose_insert_null(props);                      // message-id
@@ -360,8 +356,8 @@ static int handle_incoming(qdr_tcp_connection_t *conn, const char *msg)
         //qd_compose_insert_null(props);                      // reply-to-group-id
         qd_compose_end_list(props);
 
-        qd_message_compose_2(msg, props, false);
-        qd_compose_free(props);
+        qd_message_t *msg = qd_message_compose(props, 0, 0, false);
+        qd_message_set_streaming_annotation(msg);
 
         // set up message q2 unblocked callback handler
         qd_alloc_safe_ptr_t conn_sp = QD_SAFE_PTR_INIT(conn);
