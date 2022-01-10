@@ -1212,10 +1212,6 @@ const char *qd_message_message_annotations(qd_message_t *in_msg)
         qd_parse_free(ma_pf_stream);
     }
 
-    if (content->ma_pf_to_override) {
-        msg->ma_to_override = qd_parse_as_string(content->ma_pf_to_override);
-    }
-
     return 0;
 }
 
@@ -1723,7 +1719,7 @@ static void compose_message_annotations_v1(qd_message_pvt_t *msg, qd_buffer_list
         return;
 
     // add dispatch router specific annotations if any are defined
-    if (msg->ma_to_override ||
+    if ((msg->ma_to_override || msg->content->ma_pf_to_override) ||
         !DEQ_IS_EMPTY(msg->ma_trace) ||
         !DEQ_IS_EMPTY(msg->ma_ingress) ||
         msg->ma_phase != 0 ||
@@ -1737,6 +1733,12 @@ static void compose_message_annotations_v1(qd_message_pvt_t *msg, qd_buffer_list
         if (msg->ma_to_override) {
             qd_compose_insert_symbol(field, QD_MA_TO);
             qd_compose_insert_string(field, msg->ma_to_override);
+            field_count++;
+        } else if (msg->content->ma_pf_to_override) {
+            char *to_override = qd_parse_as_string(msg->content->ma_pf_to_override);
+            qd_compose_insert_symbol(field, QD_MA_TO);
+            qd_compose_insert_string(field, to_override);
+            free(to_override);
             field_count++;
         }
 
