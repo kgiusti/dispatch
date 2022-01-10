@@ -1153,7 +1153,6 @@ qd_message_t *qd_message_copy(qd_message_t *in_msg)
         copy->ma_reset_ingress  = msg->ma_reset_ingress;
         copy->ma_phase          = msg->ma_phase;
         copy->ma_streaming      = msg->ma_streaming;
-        qd_message_message_annotations((qd_message_t*) copy);
     }
 
     sys_atomic_inc(&content->ref_count);
@@ -1161,7 +1160,7 @@ qd_message_t *qd_message_copy(qd_message_t *in_msg)
     return (qd_message_t*) copy;
 }
 
-const char *qd_message_message_annotations(qd_message_t *in_msg)
+const char *qd_message_parse_annotations(qd_message_t *in_msg)
 {
     qd_message_pvt_t     *msg     = (qd_message_pvt_t*) in_msg;
     qd_message_content_t *content = msg->content;
@@ -1670,7 +1669,9 @@ static void send_handler(void *context, const unsigned char *start, int length)
 }
 
 
-static void compose_message_annotations_v0(qd_message_pvt_t *msg, qd_buffer_list_t *out)
+// Restore MA to the original user-supplied MA values.
+//
+static void restore_user_message_annotations(qd_message_pvt_t *msg, qd_buffer_list_t *out)
 {
     if (msg->content->ma_count > 0) {
         qd_composed_field_t *out_ma = qd_compose(QD_PERFORMATIVE_MESSAGE_ANNOTATIONS, 0);
@@ -1816,7 +1817,7 @@ static void compose_message_annotations(qd_message_pvt_t *msg, qd_buffer_list_t 
                                         bool strip_annotations)
 {
     if (strip_annotations) {
-        compose_message_annotations_v0(msg, out);
+        restore_user_message_annotations(msg, out);
     } else {
         compose_message_annotations_v1(msg, out, out_trailer);
     }
@@ -2359,7 +2360,7 @@ void qd_message_compose_3(qd_message_t *msg, qd_composed_field_t *field1, qd_com
     // set up the locations of the message headers sent prior to the message
     // annotations section.  This is used when composing outgoing router
     // annotations:
-    qd_message_message_annotations(msg);
+    qd_message_parse_annotations(msg);
 
     // initialize the Q2 flag:
     if (_Q2_holdoff_should_block_LH(content))
@@ -2389,7 +2390,7 @@ qd_message_t *qd_message_compose(qd_composed_field_t *f1,
     // set up the locations of the message headers sent prior to the message
     // annotations section.  This is used when composing outgoing router
     // annotations:
-    qd_message_message_annotations(msg);
+    qd_message_parse_annotations(msg);
 
     // initialize the Q2 flag:
     if (_Q2_holdoff_should_block_LH(content))

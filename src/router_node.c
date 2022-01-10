@@ -673,7 +673,7 @@ static bool AMQP_rx_handler(void* context, qd_link_t *link)
         }
     }
 
-    const char *ma_error = qd_message_message_annotations(msg);
+    const char *ma_error = qd_message_parse_annotations(msg);
     if (ma_error) {
         qd_log(router->log_source, QD_LOG_DEBUG,
                "[C%"PRIu64"][L%"PRIu64"] Message rejected - invalid MA section: %s",

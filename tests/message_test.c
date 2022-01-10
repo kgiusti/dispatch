@@ -429,7 +429,7 @@ static char* test_parse_message_annotations(void *context)
         goto exit;
     }
 
-    error = (char*) qd_message_message_annotations(msg);
+    error = (char*) qd_message_parse_annotations(msg);
     if (error) {
         goto exit;
     }
@@ -460,7 +460,7 @@ static char* test_parse_message_annotations(void *context)
         goto exit;
     }
 
-    qd_parsed_field_t *pf_ingress = qd_message_get_ingress(msg);
+    qd_parsed_field_t *pf_ingress = qd_message_get_ingress_router(msg);
     if (!pf_ingress) {
         error = "INGRESS not found!";
         goto exit;
