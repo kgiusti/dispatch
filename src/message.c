@@ -2348,6 +2348,9 @@ ssize_t qd_message_field_copy(qd_message_t *msg, qd_message_field_t field, char 
 void qd_message_compose_3(qd_message_t *msg, qd_composed_field_t *field1, qd_composed_field_t *field2, bool receive_complete)
 {
     qd_message_content_t *content        = MSG_CONTENT(msg);
+
+    LOCK(content->lock);
+
     SET_ATOMIC_BOOL(&content->receive_complete, receive_complete);
     qd_buffer_list_t     *field1_buffers = qd_compose_buffers(field1);
     qd_buffer_list_t     *field2_buffers = qd_compose_buffers(field2);
@@ -2356,14 +2359,16 @@ void qd_message_compose_3(qd_message_t *msg, qd_composed_field_t *field1, qd_com
     DEQ_INIT(*field1_buffers);
     DEQ_APPEND(content->buffers, (*field2_buffers));
 
+    // initialize the Q2 flag:
+    if (_Q2_holdoff_should_block_LH(content))
+        content->q2_input_holdoff = true;
+
+    UNLOCK(content->lock);
+
     // set up the locations of the message headers sent prior to the message
     // annotations section.  This is used when composing outgoing router
     // annotations:
     qd_message_parse_annotations(msg);
-
-    // initialize the Q2 flag:
-    if (_Q2_holdoff_should_block_LH(content))
-        content->q2_input_holdoff = true;
 }
 
 
@@ -2386,14 +2391,14 @@ qd_message_t *qd_message_compose(qd_composed_field_t *f1,
         qd_compose_free(fields[idx]);
     }
 
+    // initialize the Q2 flag:
+    if (_Q2_holdoff_should_block_LH(content))
+        content->q2_input_holdoff = true;
+
     // set up the locations of the message headers sent prior to the message
     // annotations section.  This is used when composing outgoing router
     // annotations:
     qd_message_parse_annotations(msg);
-
-    // initialize the Q2 flag:
-    if (_Q2_holdoff_should_block_LH(content))
-        content->q2_input_holdoff = true;
 
     return msg;
 }
