@@ -3,7 +3,7 @@
   "version": "1.19.0",
   "private": true,
   "dependencies": {
-    "@patternfly/patternfly": "^4.171.1",
+    "@patternfly/patternfly": "^4.183.1",
     "@patternfly/react-charts": "^6.45.15",
     "@patternfly/react-core": "^4.192.15",
     "@patternfly/react-icons": "^4.43.15",
